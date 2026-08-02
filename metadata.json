@@ -1,0 +1,6 @@
+{
+  "name": "Trippy's Mehfill ERP",
+  "description": "Hyderabad's Cloud Kitchen & Food Delivery Platform with Supabase Auth, Admin ERP, Kitchen KDS, Driver App & Customer Storefront",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
