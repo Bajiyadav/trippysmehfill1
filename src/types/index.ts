@@ -7,11 +7,26 @@ export interface UserProfile {
   phone: string;
   hostel_address?: string;
   role: UserRole;
+  account_status?: 'active' | 'pending_verification' | 'blocked_fraud';
+  is_whatsapp_verified?: boolean;
   is_approved: boolean;
   is_active: boolean;
   username?: string;
   avatar_url?: string;
   created_at?: string;
+  auth_provider?: 'Email' | 'Google' | 'Phone';
+  ip_address?: string;
+  latitude?: number;
+  longitude?: number;
+  location_city?: string;
+}
+
+export interface GalleryItem {
+  id: string;
+  title: string;
+  caption?: string;
+  image_url: string;
+  created_at: string;
 }
 
 export type FoodCategory = 'All' | 'Biryani' | 'Pizza' | 'Desserts' | 'South Indian' | 'Burgers' | 'Veg' | 'Non-Veg';

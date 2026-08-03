@@ -1,55 +1,226 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { X, Lock, Mail, User, Phone, MapPin, AlertCircle } from 'lucide-react';
+import { X, Lock, Mail, User, Phone, MapPin, AlertCircle, ShieldCheck, Key, RefreshCw, CheckCircle, Navigation, ShieldAlert } from 'lucide-react';
+import { UserProfile } from '../../types';
+import { sendEmailVerificationOTP, verifyEmailOTPCode } from '../../lib/emailService';
+import { requestValidatedLocation, KITCHEN_LAT, KITCHEN_LNG, MAX_SERVICE_RADIUS_KM } from '../../lib/geoUtils';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   defaultTab?: 'signin' | 'register';
+  onRegisterSuccess?: (user: UserProfile) => void;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultTab = 'signin' }) => {
+export const AuthModal: React.FC<AuthModalProps> = ({
+  isOpen,
+  onClose,
+  defaultTab = 'signin',
+  onRegisterSuccess
+}) => {
   const { signIn, signUp, signInWithGoogle, loading } = useAuth();
   const [activeTab, setActiveTab] = useState<'signin' | 'register'>(defaultTab);
 
-  // Form states
-  const [signInIdentifier, setSignInIdentifier] = useState('6301196547');
-  const [signInPassword, setSignInPassword] = useState('••••••••');
-  
+  // Sub-step for registration: 'form' | 'otp_verify' | 'google_verify'
+  const [regStep, setRegStep] = useState<'form' | 'otp_verify' | 'google_verify'>('form');
+  const [googleEmailInput, setGoogleEmailInput] = useState('');
+  const [googleFullName, setGoogleFullName] = useState('');
+  const [googlePhone, setGooglePhone] = useState('');
+  const [googleAddress, setGoogleAddress] = useState('');
+  const [isGoogleOtpSent, setIsGoogleOtpSent] = useState(false);
+
+  // Form inputs
+  const [signInIdentifier, setSignInIdentifier] = useState('');
+  const [signInPassword, setSignInPassword] = useState('');
+
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [hostelAddress, setHostelAddress] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
+  // Security data
+  const [isLocating, setIsLocating] = useState(false);
+  const [geoDenied, setGeoDenied] = useState(false);
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [distanceFromKitchen, setDistanceFromKitchen] = useState<number>(0);
+  const [ipAddress, setIpAddress] = useState<string>('103.211.14.82');
+  const [locationCity, setLocationCity] = useState<string>('Hyderabad Cloud Kitchen');
+
+  // Email OTP state
+  const [generatedOtp, setGeneratedOtp] = useState<string>('');
+  const [enteredOtp, setEnteredOtp] = useState<string>('');
+  const [resendTimer, setResendTimer] = useState<number>(60);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+
   const [errorMsg, setErrorMsg] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
 
+  useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab, isOpen]);
+
+  // Resend Timer countdown
+  useEffect(() => {
+    let interval: any = null;
+    if (regStep === 'otp_verify' && resendTimer > 0) {
+      interval = setInterval(() => {
+        setResendTimer(prev => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [regStep, resendTimer]);
+
   if (!isOpen) return null;
+
+  // Real-Time Hardware Geolocation & 15km Geo-Fence Enforcement
+  const captureSecurityDetails = async (): Promise<{ lat: number; lng: number; ip: string; isOK: boolean }> => {
+    setIsLocating(true);
+    setGeoDenied(false);
+
+    const geoResult = await requestValidatedLocation();
+
+    setIpAddress(geoResult.ipAddress);
+    setLatitude(geoResult.latitude);
+    setLongitude(geoResult.longitude);
+    setDistanceFromKitchen(geoResult.distanceKm);
+
+    if (geoResult.errorType === 'DENIED') {
+      setGeoDenied(true);
+      setIsLocating(false);
+      return { lat: 0, lng: 0, ip: geoResult.ipAddress, isOK: false };
+    }
+
+    if (!geoResult.isWithinZone) {
+      setErrorMsg(`Delivery Unauthorized: You are outside our ${MAX_SERVICE_RADIUS_KM}km operational service zone (${geoResult.distanceKm} km from kitchen).`);
+      setIsLocating(false);
+      return { lat: geoResult.latitude, lng: geoResult.longitude, ip: geoResult.ipAddress, isOK: false };
+    }
+
+    setIsLocating(false);
+    return { lat: geoResult.latitude, lng: geoResult.longitude, ip: geoResult.ipAddress, isOK: true };
+  };
 
   const handleSignInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setInfoMsg('');
-    const res = await signIn(signInIdentifier, signInPassword);
+
+    if (!signInIdentifier.trim()) {
+      setErrorMsg('Please enter your email, mobile, or username.');
+      return;
+    }
+
+    const geo = await captureSecurityDetails();
+    if (!geo.isOK && geoDenied) return;
+
+    const res = await signIn(signInIdentifier.trim(), signInPassword);
     if (res.success) {
-      onClose();
+      setInfoMsg('Successfully signed in!');
+      setTimeout(() => {
+        onClose();
+      }, 500);
     } else {
-      setErrorMsg(res.message || 'Invalid credentials');
+      setErrorMsg(res.message || 'Invalid credentials. Please try again.');
     }
   };
 
-  const handleRegisterSubmit = async (e: React.FormEvent) => {
+  const handleRegisterFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setInfoMsg('');
 
-    if (!fullName || !phone || !hostelAddress || !email || !password) {
-      setErrorMsg('Please fill in all registration fields');
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = phone.trim();
+    const cleanName = fullName.trim();
+    const cleanAddress = hostelAddress.trim();
+
+    // 1. Strict Email Regex Validation
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(cleanEmail)) {
+      setErrorMsg('Invalid email format! Please enter a valid email address (e.g. name@gmail.com).');
       return;
     }
 
-    const res = await signUp({
+    // 2. Strict 10-Digit Mobile Number Validation
+    const phoneRegex = /^[6-9]\d{9}$/;
+    if (!phoneRegex.test(cleanPhone)) {
+      setErrorMsg('Invalid mobile number! Please enter a valid 10-digit phone number (e.g. 9876543210).');
+      return;
+    }
+
+    if (cleanName.length < 3) {
+      setErrorMsg('Full name must be at least 3 characters.');
+      return;
+    }
+
+    if (cleanAddress.length < 3) {
+      setErrorMsg('Hostel or delivery address must be at least 3 characters.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMsg('Password must be at least 6 characters long.');
+      return;
+    }
+
+    // Capture & Validate Geolocation 15km Geo-fence
+    const geo = await captureSecurityDetails();
+    if (!geo.isOK) return;
+
+    // Send verification OTP to email
+    const result = await sendEmailVerificationOTP(cleanEmail, cleanName);
+    if (result.otpCode) {
+      setGeneratedOtp(result.otpCode);
+    }
+    setResendTimer(60);
+    setRegStep('otp_verify');
+    setInfoMsg(`Security 6-digit OTP dispatched to ${cleanEmail}. Check your inbox.`);
+  };
+
+  const handleResendOtp = async () => {
+    setErrorMsg('');
+    const result = await sendEmailVerificationOTP(email.trim().toLowerCase(), fullName.trim());
+    if (result.otpCode) {
+      setGeneratedOtp(result.otpCode);
+    }
+    setResendTimer(60);
+    setInfoMsg(`New security OTP code sent to ${email}!`);
+  };
+
+  const handleVerifyOtpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    const verification = await verifyEmailOTPCode(email, enteredOtp, generatedOtp);
+    if (!verification.success) {
+      setErrorMsg(verification.message);
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+
+    const newCustomer: UserProfile = {
+      id: 'c-' + Date.now(),
+      email: email.trim().toLowerCase(),
+      full_name: fullName.trim(),
+      phone: phone.trim(),
+      hostel_address: hostelAddress.trim(),
+      role: 'customer',
+      account_status: 'active',
+      is_whatsapp_verified: false, // Requires 1-click WhatsApp verification to unlock food ordering
+      is_approved: true,
+      is_active: true,
+      auth_provider: 'Email',
+      ip_address: ipAddress,
+      latitude: latitude || KITCHEN_LAT,
+      longitude: longitude || KITCHEN_LNG,
+      location_city: locationCity,
+      created_at: new Date().toLocaleString()
+    };
+
+    await signUp({
       full_name: fullName,
       phone,
       hostel_address: hostelAddress,
@@ -57,78 +228,415 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultTa
       password
     });
 
-    if (res.success) {
-      setInfoMsg(res.message || 'Registration submitted! Waiting for Admin approval.');
+    setIsVerifyingOtp(false);
+
+    if (onRegisterSuccess) {
+      onRegisterSuccess(newCustomer);
+    }
+
+    setInfoMsg('Email verified and account created successfully! Welcome to Trippy\'s Mehfill.');
+    setTimeout(() => {
+      onClose();
+    }, 1000);
+  };
+
+  const handleStartGoogleSignInFlow = () => {
+    setErrorMsg('');
+    setInfoMsg('');
+    const prefillEmail = email.trim() || (signInIdentifier.includes('@') ? signInIdentifier.trim() : '');
+    setGoogleEmailInput(prefillEmail);
+    if (fullName) setGoogleFullName(fullName);
+    if (phone) setGooglePhone(phone);
+    if (hostelAddress) setGoogleAddress(hostelAddress);
+    setEnteredOtp('');
+    setIsGoogleOtpSent(false);
+    setRegStep('google_verify');
+  };
+
+  const handleSendGoogleOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setErrorMsg('');
+    setInfoMsg('');
+
+    const cleanName = googleFullName.trim();
+    const cleanPhone = googlePhone.trim();
+    const cleanAddress = googleAddress.trim();
+    const cleanEmail = googleEmailInput.trim().toLowerCase();
+
+    if (cleanName.length < 3) {
+      setErrorMsg('Please enter customer full name (min 3 characters).');
+      return;
+    }
+
+    const phoneRegex = /^[6-9]\d{9}$/;
+    if (!phoneRegex.test(cleanPhone)) {
+      setErrorMsg('Invalid mobile number! Please enter a valid 10-digit phone number (e.g. 9876543210).');
+      return;
+    }
+
+    if (cleanAddress.length < 3) {
+      setErrorMsg('Please enter customer hostel/delivery address.');
+      return;
+    }
+
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(cleanEmail)) {
+      setErrorMsg('Please enter a valid Google email address (e.g. user@gmail.com).');
+      return;
+    }
+
+    await captureSecurityDetails();
+
+    const result = await sendEmailVerificationOTP(cleanEmail, cleanName || 'Google Customer');
+    if (result.otpCode) {
+      setGeneratedOtp(result.otpCode);
+    }
+    setIsGoogleOtpSent(true);
+    setResendTimer(60);
+    setInfoMsg(result.message);
+  };
+
+  const handleVerifyGoogleOtpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    const cleanEmail = googleEmailInput.trim().toLowerCase();
+    const verification = await verifyEmailOTPCode(cleanEmail, enteredOtp, generatedOtp);
+    if (!verification.success) {
+      setErrorMsg(verification.message);
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+    try {
+      const cleanName = googleFullName.trim() || 'Google Customer';
+      const cleanPhone = googlePhone.trim() || '9876543210';
+      const cleanAddress = googleAddress.trim() || 'Campus Hostel Block A';
+
+      await signInWithGoogle(
+        cleanEmail,
+        cleanName,
+        cleanPhone,
+        cleanAddress,
+        ipAddress,
+        latitude || 17.3850,
+        longitude || 78.4867
+      );
+
+      const newGoogleCustomer: UserProfile = {
+        id: 'g-user-' + Date.now(),
+        email: cleanEmail,
+        full_name: cleanName,
+        phone: cleanPhone,
+        hostel_address: cleanAddress,
+        role: 'customer',
+        is_approved: true,
+        is_active: true,
+        auth_provider: 'Google',
+        ip_address: ipAddress,
+        latitude: latitude || 17.3850,
+        longitude: longitude || 78.4867,
+        location_city: locationCity,
+        created_at: new Date().toLocaleString()
+      };
+
+      if (onRegisterSuccess) {
+        onRegisterSuccess(newGoogleCustomer);
+      }
+
+      setInfoMsg(`Verified & Signed in with Google as ${cleanEmail}!`);
       setTimeout(() => {
-        setActiveTab('signin');
-      }, 1500);
-    } else {
-      setErrorMsg(res.message || 'Registration failed');
+        onClose();
+      }, 800);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to authenticate Google user.');
+    } finally {
+      setIsVerifyingOtp(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div className="bg-[#121212] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl transition-all border border-white/10 text-gray-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+      <div className="bg-[#121212] rounded-3xl w-full max-w-md overflow-hidden shadow-2xl border border-white/10 text-gray-200 relative">
         
-        {/* Modal Header */}
+        {/* MANDATORY GEOLOCATION DENIED OVERLAY */}
+        {geoDenied && (
+          <div className="absolute inset-0 z-30 bg-[#0d0d0d]/95 backdrop-blur-md p-6 flex flex-col items-center justify-center text-center space-y-4">
+            <div className="w-14 h-14 bg-rose-500/20 border border-rose-500/40 text-rose-400 rounded-2xl flex items-center justify-center shadow-lg shadow-rose-500/20">
+              <ShieldAlert className="w-8 h-8" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-lg font-black text-white font-serif">Access Denied</h3>
+              <p className="text-xs text-rose-300 font-medium px-2 leading-relaxed">
+                Access Denied: Location verification is mandatory to prevent fraudulent orders from unauthorized geographic zones.
+              </p>
+            </div>
+            <div className="p-3 bg-white/5 border border-white/10 rounded-2xl text-[11px] text-gray-400 text-left space-y-1 w-full font-mono">
+              <p className="text-orange-400 font-bold">Why location is required:</p>
+              <p>• Prevents out-of-state bot registrations</p>
+              <p>• Verifies proximity within 15km Cloud Kitchen radius</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => captureSecurityDetails()}
+              className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-extrabold rounded-2xl shadow-xl shadow-rose-600/30 transition text-xs flex items-center justify-center gap-2"
+            >
+              <Navigation className="w-4 h-4" />
+              <span>Retry Geolocation Permission</span>
+            </button>
+          </div>
+        )}
+
+        {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5 pb-3 border-b border-white/10">
-          <h2 className="text-xl font-bold text-white font-serif tracking-wide">
-            {activeTab === 'signin' ? 'Sign in' : 'Create your account'}
-          </h2>
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-orange-500" />
+            <h2 className="text-lg font-bold text-white font-serif tracking-wide">
+              {activeTab === 'signin' ? 'Sign In to Order' : 'Create Customer Account'}
+            </h2>
+          </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="p-1.5 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex p-2 bg-[#0d0d0d] border-b border-white/10">
-          <button
-            onClick={() => { setActiveTab('signin'); setErrorMsg(''); setInfoMsg(''); }}
-            className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${
-              activeTab === 'signin'
-                ? 'bg-[#C5A059] text-black font-extrabold shadow-sm'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            Sign in
-          </button>
-          <button
-            onClick={() => { setActiveTab('register'); setErrorMsg(''); setInfoMsg(''); }}
-            className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${
-              activeTab === 'register'
-                ? 'bg-[#C5A059] text-black font-extrabold shadow-sm'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            Register
-          </button>
-        </div>
+        {/* Primary Toggle Tabs (Hidden during Google Verification) */}
+        {regStep !== 'google_verify' && (
+          <div className="flex p-2 bg-[#0d0d0d] border-b border-white/10">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('signin');
+                setRegStep('form');
+                setErrorMsg('');
+                setInfoMsg('');
+              }}
+              className={`flex-1 py-2.5 text-xs font-black rounded-xl transition ${
+                activeTab === 'signin'
+                  ? 'bg-orange-600 text-white shadow-md'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('register');
+                setRegStep('form');
+                setErrorMsg('');
+                setInfoMsg('');
+              }}
+              className={`flex-1 py-2.5 text-xs font-black rounded-xl transition ${
+                activeTab === 'register'
+                  ? 'bg-orange-600 text-white shadow-md'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Create Account
+            </button>
+          </div>
+        )}
 
-        {/* Form Container */}
-        <div className="p-6 max-h-[80vh] overflow-y-auto">
+        {/* Form Body */}
+        <div className="p-6 max-h-[80vh] overflow-y-auto space-y-4">
 
           {errorMsg && (
-            <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-sm rounded-xl flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+            <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs rounded-2xl flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{errorMsg}</span>
             </div>
           )}
 
           {infoMsg && (
-            <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm rounded-xl">
-              {infoMsg}
+            <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs rounded-2xl flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 shrink-0" />
+              <span>{infoMsg}</span>
             </div>
           )}
 
-          {activeTab === 'signin' ? (
+          {/* STEP: GOOGLE ACCOUNT & EMAIL OTP VERIFICATION */}
+          {regStep === 'google_verify' && (
+            <div className="space-y-4">
+              <div className="p-3.5 bg-blue-500/10 border border-blue-500/30 rounded-2xl text-xs space-y-1.5">
+                <div className="flex items-center gap-2 text-blue-400 font-bold">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                  </svg>
+                  <span>Google Account Email Verification</span>
+                </div>
+                <p className="text-gray-300 text-[11px] leading-relaxed">
+                  Enter your Google Account email below. A 6-digit OTP code will be dispatched to your inbox to verify identity.
+                </p>
+              </div>
+
+              {!isGoogleOtpSent ? (
+                <form onSubmit={handleSendGoogleOtp} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1">
+                      Full Name *
+                    </label>
+                    <div className="relative">
+                      <User className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={googleFullName}
+                        onChange={(e) => setGoogleFullName(e.target.value)}
+                        required
+                        placeholder="e.g. Naga Pavan"
+                        className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1">
+                      10-Digit Mobile Phone Number *
+                    </label>
+                    <div className="relative">
+                      <Phone className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="tel"
+                        value={googlePhone}
+                        onChange={(e) => setGooglePhone(e.target.value)}
+                        required
+                        placeholder="e.g. 9876543210"
+                        className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1">
+                      Hostel / Delivery Address *
+                    </label>
+                    <div className="relative">
+                      <MapPin className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={googleAddress}
+                        onChange={(e) => setGoogleAddress(e.target.value)}
+                        required
+                        placeholder="e.g. Block A, Room 104"
+                        className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1">
+                      Google Account Email Address *
+                    </label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="email"
+                        value={googleEmailInput}
+                        onChange={(e) => setGoogleEmailInput(e.target.value)}
+                        required
+                        placeholder="e.g. nagapavankumarjavisetty@gmail.com"
+                        className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isLocating}
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transition text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isLocating ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Capturing Hardware Geolocation...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Mail className="w-4 h-4" />
+                        <span>Send Verification Code to Google Email</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRegStep('form')}
+                    className="w-full py-2 text-xs text-gray-400 hover:text-white"
+                  >
+                    Cancel / Back
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleVerifyGoogleOtpSubmit} className="space-y-4">
+                  <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-2xl space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between text-blue-400 font-bold">
+                      <span className="flex items-center gap-1.5">
+                        <Mail className="w-4 h-4" /> Google Security Code Dispatched
+                      </span>
+                      <span className="text-[10px] font-mono bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full font-bold">
+                        CHECK INBOX
+                      </span>
+                    </div>
+                    <p className="text-gray-300 text-[11px] leading-relaxed">
+                      Verification code sent to <strong className="text-white">{googleEmailInput}</strong>. Please check your inbox or spam folder.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1">
+                      Enter 6-Digit Google OTP *
+                    </label>
+                    <div className="relative">
+                      <Key className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        maxLength={6}
+                        value={enteredOtp}
+                        onChange={(e) => setEnteredOtp(e.target.value)}
+                        required
+                        placeholder="6-Digit OTP Code"
+                        className="w-full pl-9 pr-3 py-3 bg-[#181818] border border-white/10 rounded-xl text-center text-lg font-mono tracking-widest text-orange-400 font-black outline-none focus:border-orange-500"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isVerifyingOtp}
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl shadow-lg transition text-xs flex items-center justify-center gap-2"
+                  >
+                    {isVerifyingOtp ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <CheckCircle className="w-4 h-4" />
+                    )}
+                    <span>Verify & Sign In with Google</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsGoogleOtpSent(false)}
+                    className="w-full py-1 text-xs text-gray-400 hover:text-white"
+                  >
+                    Use Different Google Email
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* SIGN IN FORM */}
+          {activeTab === 'signin' && (
             <form onSubmit={handleSignInSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1">
-                  Email or staff username
+                <label className="block text-xs font-bold text-gray-300 mb-1">
+                  Mobile Number / Email Address / Username
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -137,14 +645,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultTa
                     value={signInIdentifier}
                     onChange={(e) => setSignInIdentifier(e.target.value)}
                     required
-                    placeholder="e.g. nagapavankumarjavisetty@gmail.com or 6301196547"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:border-[#C5A059] outline-none transition"
+                    placeholder="Enter phone or email (e.g. 9876543210)"
+                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1">
+                <label className="block text-xs font-bold text-gray-300 mb-1">
                   Password
                 </label>
                 <div className="relative">
@@ -153,9 +661,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultTa
                     type="password"
                     value={signInPassword}
                     onChange={(e) => setSignInPassword(e.target.value)}
-                    required
                     placeholder="Enter password"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:border-[#C5A059] outline-none transition"
+                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
@@ -163,17 +670,35 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultTa
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 bg-[#C5A059] hover:bg-[#b38f48] active:scale-[0.99] text-black font-extrabold rounded-xl shadow-lg shadow-[#C5A059]/20 transition-all text-sm disabled:opacity-50 mt-2"
+                className="w-full py-3 bg-orange-600 hover:bg-orange-700 text-white font-black rounded-xl shadow-lg shadow-orange-600/30 transition text-xs"
               >
-                {loading ? 'Signing In...' : 'Sign in'}
+                {loading ? 'Signing In...' : 'Sign In'}
               </button>
+
+              <div className="text-center pt-2">
+                <p className="text-xs text-gray-400">
+                  Don't have an account?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('register');
+                      setRegStep('form');
+                      setErrorMsg('');
+                    }}
+                    className="text-orange-400 font-extrabold hover:underline"
+                  >
+                    Create Account
+                  </button>
+                </p>
+              </div>
             </form>
-          ) : (
-            <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
+          )}
+
+          {/* REGISTER STEP 1: FORM INPUTS */}
+          {activeTab === 'register' && regStep === 'form' && (
+            <form onSubmit={handleRegisterFormSubmit} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1">
-                  Full name
-                </label>
+                <label className="block text-xs font-bold text-gray-300 mb-1">Full Name *</label>
                 <div className="relative">
                   <User className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
@@ -181,16 +706,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultTa
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     required
-                    placeholder="Enter full name"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:border-[#C5A059] outline-none transition"
+                    placeholder="e.g. Naga Pavan Kumar"
+                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1">
-                  Phone number
-                </label>
+                <label className="block text-xs font-bold text-gray-300 mb-1">Phone Number *</label>
                 <div className="relative">
                   <Phone className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
@@ -199,32 +722,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultTa
                     onChange={(e) => setPhone(e.target.value)}
                     required
                     placeholder="10-digit mobile number"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:border-[#C5A059] outline-none transition"
+                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1">
-                  Hostel / address details
-                </label>
-                <div className="relative">
-                  <MapPin className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={hostelAddress}
-                    onChange={(e) => setHostelAddress(e.target.value)}
-                    required
-                    placeholder="e.g. Room 304, Campus Hostel A"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:border-[#C5A059] outline-none transition"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1">
-                  Email
-                </label>
+                <label className="block text-xs font-bold text-gray-300 mb-1">Email Address *</label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
@@ -233,15 +737,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultTa
                     onChange={(e) => setEmail(e.target.value)}
                     required
                     placeholder="name@example.com"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:border-[#C5A059] outline-none transition"
+                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1">
-                  Password
-                </label>
+                <label className="block text-xs font-bold text-gray-300 mb-1">Hostel / Delivery Address *</label>
+                <div className="relative">
+                  <MapPin className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={hostelAddress}
+                    onChange={(e) => setHostelAddress(e.target.value)}
+                    required
+                    placeholder="Hostel Gate / Room Number"
+                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1">Password *</label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
@@ -249,57 +766,163 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultTa
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    placeholder="At least 6 characters"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:border-[#C5A059] outline-none transition"
+                    placeholder="Min 6 characters"
+                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
 
               <button
                 type="submit"
-                disabled={loading}
-                className="w-full py-3 bg-[#C5A059] hover:bg-[#b38f48] active:scale-[0.99] text-black font-extrabold rounded-xl shadow-lg shadow-[#C5A059]/20 transition-all text-sm disabled:opacity-50 mt-2"
+                disabled={isLocating}
+                className="w-full py-3 bg-orange-600 hover:bg-orange-700 text-white font-black rounded-xl shadow-lg shadow-orange-600/30 transition text-xs flex items-center justify-center gap-2 disabled:opacity-50"
               >
-                {loading ? 'Creating Account...' : 'Create account'}
+                {isLocating ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Continue to Verification OTP</span>
+                  </>
+                )}
+              </button>
+
+              <div className="text-center pt-2">
+                <p className="text-xs text-gray-400">
+                  Already registered?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('signin');
+                      setErrorMsg('');
+                    }}
+                    className="text-orange-400 font-extrabold hover:underline"
+                  >
+                    Sign In
+                  </button>
+                </p>
+              </div>
+            </form>
+          )}
+
+          {/* REGISTER STEP 2: EMAIL 6-DIGIT OTP VERIFICATION */}
+          {activeTab === 'register' && regStep === 'otp_verify' && (
+            <form onSubmit={handleVerifyOtpSubmit} className="space-y-4">
+              
+              {/* Email Security Dispatched Banner */}
+              <div className="p-3.5 bg-orange-500/10 border border-orange-500/30 rounded-2xl space-y-2 text-xs">
+                <div className="flex items-center justify-between text-orange-400 font-bold">
+                  <span className="flex items-center gap-1.5">
+                    <Mail className="w-4 h-4" /> Email Verification OTP
+                  </span>
+                  <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold">
+                    SENT TO INBOX
+                  </span>
+                </div>
+                <p className="text-gray-300 text-[11px] leading-relaxed">
+                  A 6-digit OTP security code has been sent to <strong className="text-white">{email}</strong>. Please check your email inbox to verify.
+                </p>
+              </div>
+
+              {/* OTP Input Field */}
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1">
+                  Enter 6-Digit Email OTP *
+                </label>
+                <div className="relative">
+                  <Key className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={enteredOtp}
+                    onChange={(e) => setEnteredOtp(e.target.value)}
+                    required
+                    placeholder="e.g. 839201"
+                    className="w-full pl-9 pr-3 py-3 bg-[#181818] border border-white/10 rounded-xl text-center text-lg font-mono tracking-widest text-orange-400 font-black outline-none focus:border-orange-500"
+                  />
+                </div>
+              </div>
+
+              {/* Resend Timer & Button */}
+              <div className="flex items-center justify-between text-xs text-gray-400 pt-1">
+                <span>Resend OTP Code:</span>
+                {resendTimer > 0 ? (
+                  <span className="font-mono text-orange-400 font-bold">{resendTimer}s</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleResendOtp}
+                    className="text-orange-400 font-bold hover:underline flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Resend Code
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={isVerifyingOtp}
+                className="w-full py-3 bg-orange-600 hover:bg-orange-700 text-white font-black rounded-xl shadow-lg shadow-orange-600/30 transition text-xs flex items-center justify-center gap-2"
+              >
+                {isVerifyingOtp ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Verifying OTP...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Verify & Complete Registration</span>
+                  </>
+                )}
               </button>
             </form>
           )}
 
-          {/* Social Google Login Divider */}
-          <div className="relative my-5">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/10"></div>
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-[#121212] px-3 text-gray-500 font-medium">Or</span>
-            </div>
-          </div>
+          {/* GOOGLE OAUTH BUTTON (Hidden during Google Verification step) */}
+          {regStep !== 'google_verify' && (
+            <>
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-white/10"></div>
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-[#121212] px-3 text-gray-500 font-medium">Or</span>
+                </div>
+              </div>
 
-          <button
-            type="button"
-            onClick={signInWithGoogle}
-            className="w-full py-2.5 px-4 bg-[#181818] border border-white/10 hover:bg-white/5 text-gray-200 font-medium rounded-xl flex items-center justify-center gap-3 transition shadow-sm text-sm"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24">
-              <path
-                fill="#4285F4"
-                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-              />
-            </svg>
-            <span>Continue with Google</span>
-          </button>
+              <button
+                type="button"
+                onClick={handleStartGoogleSignInFlow}
+                disabled={isLocating}
+                className="w-full py-2.5 px-4 bg-[#181818] border border-white/10 hover:bg-white/5 text-gray-200 font-bold rounded-xl flex items-center justify-center gap-3 transition shadow-sm text-xs disabled:opacity-50"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  />
+                </svg>
+                <span>Sign in with Google</span>
+              </button>
+            </>
+          )}
+
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Radio, CookingPot, UserCheck, UtensilsCrossed, Package, History, MessageSquare, BarChart3, Users, Settings } from 'lucide-react';
+import { LayoutDashboard, Radio, CookingPot, UserCheck, UtensilsCrossed, Package, History, MessageSquare, BarChart3, Users, Settings, Image } from 'lucide-react';
 
 export type AdminTab =
   | 'dashboard'
@@ -7,6 +7,7 @@ export type AdminTab =
   | 'kitchen'
   | 'registrations'
   | 'menu'
+  | 'gallery'
   | 'inventory'
   | 'history'
   | 'feedback'
@@ -27,6 +28,7 @@ const tabs: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   { id: 'kitchen', label: 'Kitchen', icon: <CookingPot className="w-4 h-4" /> },
   { id: 'registrations', label: 'Pending Registrations', icon: <UserCheck className="w-4 h-4" /> },
   { id: 'menu', label: 'Menu', icon: <UtensilsCrossed className="w-4 h-4" /> },
+  { id: 'gallery', label: 'Gallery', icon: <Image className="w-4 h-4" /> },
   { id: 'inventory', label: 'Inventory', icon: <Package className="w-4 h-4" /> },
   { id: 'history', label: 'Order History', icon: <History className="w-4 h-4" /> },
   { id: 'feedback', label: 'Feedback', icon: <MessageSquare className="w-4 h-4" /> },

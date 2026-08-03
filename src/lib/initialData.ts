@@ -1,4 +1,4 @@
-import { MenuItem, KitchenSettings, InventoryItem, UserProfile, Order, Feedback, PromotionalBanner } from '../types';
+import { MenuItem, KitchenSettings, InventoryItem, UserProfile, Order, Feedback, PromotionalBanner, GalleryItem } from '../types';
 
 export const initialKitchenSettings: KitchenSettings = {
   kitchen_name: "Trippy's Mehfill",
@@ -10,7 +10,7 @@ export const initialKitchenSettings: KitchenSettings = {
   delivery_charge: 30,
   tax_percent: 0,
   estimated_delivery_mins: 30,
-  restaurant_upi_id: "7671018757-2@ybl",
+  restaurant_upi_id: "7671018757@ybl",
   whatsapp_number: "8569955029",
   closed_banner_message: "RESTAURANT IS CURRENTLY CLOSED (Opening Hours: 9:00 AM to 10:00 PM) - you can still browse the menu.",
   lat: 17.4483,
@@ -354,6 +354,11 @@ export const initialCustomers: UserProfile[] = [
     role: 'customer',
     is_approved: true,
     is_active: true,
+    auth_provider: 'Email',
+    ip_address: '103.211.14.82',
+    latitude: 28.3681,
+    longitude: 77.0384,
+    location_city: 'Gurugram / Sohna',
     created_at: '24/7/2026, 11:20:00 am'
   },
   {
@@ -365,6 +370,11 @@ export const initialCustomers: UserProfile[] = [
     role: 'customer',
     is_approved: true,
     is_active: true,
+    auth_provider: 'Google',
+    ip_address: '49.36.192.110',
+    latitude: 28.3695,
+    longitude: 77.0410,
+    location_city: 'Gurugram',
     created_at: '25/7/2026, 2:15:30 pm'
   },
   {
@@ -376,6 +386,11 @@ export const initialCustomers: UserProfile[] = [
     role: 'customer',
     is_approved: true,
     is_active: true,
+    auth_provider: 'Email',
+    ip_address: '152.57.10.42',
+    latitude: 28.3650,
+    longitude: 77.0320,
+    location_city: 'Sohna Road',
     created_at: '26/7/2026, 9:45:10 am'
   },
   {
@@ -387,7 +402,57 @@ export const initialCustomers: UserProfile[] = [
     role: 'customer',
     is_approved: true,
     is_active: true,
+    auth_provider: 'Google',
+    ip_address: '103.22.44.19',
+    latitude: 28.3672,
+    longitude: 77.0355,
+    location_city: 'Goenka Campus Area',
     created_at: '27/7/2026, 3:30:00 pm'
+  }
+];
+
+export const initialGalleryItems: GalleryItem[] = [
+  {
+    id: 'g-1',
+    title: 'Authentic Hyderabadi Dum Biryani',
+    caption: 'Slow-cooked in handi with rich saffron, fried onions & tender marinated chicken.',
+    image_url: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=1200&q=80',
+    created_at: '2026-07-28'
+  },
+  {
+    id: 'g-2',
+    title: 'Freshly Baked Artisanal Pizzas',
+    caption: 'Hand-stretched dough topped with melted mozzarella and fresh basil leaves.',
+    image_url: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=1200&q=80',
+    created_at: '2026-07-29'
+  },
+  {
+    id: 'g-3',
+    title: 'Crispy South Indian Dosa Mehfill',
+    caption: 'Golden paper dosa served with spicy potato masala, coconut chutney & hot sambar.',
+    image_url: 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=1200&q=80',
+    created_at: '2026-07-30'
+  },
+  {
+    id: 'g-4',
+    title: 'Trippy Signature Burgers',
+    caption: 'Double juicy patty stacked with crispy onion rings and secret garlic sauce.',
+    image_url: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=1200&q=80',
+    created_at: '2026-07-31'
+  },
+  {
+    id: 'g-5',
+    title: 'Decadent Chocolate Lava Delight',
+    caption: 'Warm molten chocolate cake served with a scoop of Madagascar vanilla ice cream.',
+    image_url: 'https://images.unsplash.com/photo-1606313564200-e75d5e30476c?w=1200&q=80',
+    created_at: '2026-08-01'
+  },
+  {
+    id: 'g-6',
+    title: 'Hygiene First Kitchen Standard',
+    caption: 'Clean stainless steel kitchen adhering to international packaging standards.',
+    image_url: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1200&q=80',
+    created_at: '2026-08-01'
   }
 ];
 

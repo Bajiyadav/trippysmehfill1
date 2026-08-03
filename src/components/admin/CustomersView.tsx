@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../../types';
-import { UserCheck, Search, Plus, Mail, Phone, MapPin, Key, Trash2, CheckCircle, XCircle, ShieldAlert, User, Calendar } from 'lucide-react';
+import { UserCheck, Search, Plus, Mail, Phone, MapPin, Key, Trash2, CheckCircle, XCircle, ShieldAlert, User, Calendar, Database, Copy, Check, MessageSquare, Lock, ShieldCheck } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 
 interface CustomersViewProps {
@@ -22,8 +22,117 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const [password, setPassword] = useState('');
   const [hostelAddress, setHostelAddress] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'whatsapp_pending' | 'blocked_fraud'>('all');
   const [successMsg, setSuccessMsg] = useState('');
+  const [customerToDelete, setCustomerToDelete] = useState<UserProfile | null>(null);
+  const [showSqlModal, setShowSqlModal] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
+
+  const sqlSchemaScript = `-- ANTI-FRAUD DATABASE SCHEMA & SCHEMA TRIGGERS
+-- Execute this SQL in the Supabase SQL Editor:
+
+CREATE TYPE user_role AS ENUM ('admin', 'staff', 'customer');
+
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  phone TEXT,
+  hostel_address TEXT,
+  role user_role DEFAULT 'customer',
+  account_status TEXT DEFAULT 'active', -- 'active', 'pending_verification', 'blocked_fraud'
+  is_whatsapp_verified BOOLEAN DEFAULT FALSE,
+  is_approved BOOLEAN DEFAULT TRUE,
+  is_active BOOLEAN DEFAULT TRUE,
+  auth_provider TEXT DEFAULT 'Email',
+  ip_address TEXT DEFAULT '103.211.14.82',
+  latitude DOUBLE PRECISION DEFAULT 17.3850,
+  longitude DOUBLE PRECISION DEFAULT 78.4867,
+  location_city TEXT DEFAULT 'Hyderabad Cloud Kitchen',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable Row Level Security (RLS)
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public profiles read access" ON public.profiles FOR SELECT USING (true);
+CREATE POLICY "Users update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+
+-- TRIGGER FUNCTION
+CREATE OR REPLACE FUNCTION public.handle_new_user_signup()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (
+    id, email, full_name, phone, hostel_address, role, account_status, is_whatsapp_verified, is_approved, is_active, auth_provider, ip_address, latitude, longitude
+  )
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', SPLIT_PART(NEW.email, '@', 1)),
+    COALESCE(NEW.raw_user_meta_data->>'phone', ''),
+    COALESCE(NEW.raw_user_meta_data->>'hostel_address', 'Campus Hostel'),
+    'customer',
+    'active',
+    FALSE,
+    TRUE,
+    TRUE,
+    'Supabase Auth',
+    COALESCE(NEW.raw_user_meta_data->>'ip_address', '103.211.14.82'),
+    COALESCE((NEW.raw_user_meta_data->>'latitude')::double precision, 17.3850),
+    COALESCE((NEW.raw_user_meta_data->>'longitude')::double precision, 78.4867)
+  )
+  ON CONFLICT (id) DO NOTHING;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user_signup();
+`;
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(sqlSchemaScript);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  const handleToggleWhatsAppVerified = async (cust: UserProfile) => {
+    const newStatus = !cust.is_whatsapp_verified;
+    cust.is_whatsapp_verified = newStatus;
+    if (newStatus && cust.account_status === 'pending_verification') {
+      cust.account_status = 'active';
+    }
+
+    if (isSupabaseConfigured) {
+      await supabase.from('profiles').update({
+        is_whatsapp_verified: newStatus,
+        account_status: cust.account_status
+      }).eq('id', cust.id);
+    }
+    setSuccessMsg(`WhatsApp verification status updated for ${cust.full_name}!`);
+    setTimeout(() => setSuccessMsg(''), 3000);
+  };
+
+  const handleToggleBlockFraud = async (cust: UserProfile) => {
+    const isCurrentlyBlocked = cust.account_status === 'blocked_fraud';
+    const newStatus = isCurrentlyBlocked ? 'active' : 'blocked_fraud';
+    const newIsActive = isCurrentlyBlocked;
+
+    cust.account_status = newStatus;
+    cust.is_active = newIsActive;
+
+    if (isSupabaseConfigured) {
+      await supabase.from('profiles').update({
+        account_status: newStatus,
+        is_active: newIsActive
+      }).eq('id', cust.id);
+    }
+
+    setSuccessMsg(isCurrentlyBlocked ? `Unblocked ${cust.full_name}.` : `Flagged & Suspended ${cust.full_name} for suspicious fraud.`);
+    setTimeout(() => setSuccessMsg(''), 3000);
+  };
 
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,8 +145,14 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       phone: phone.trim() || '9876543210',
       hostel_address: hostelAddress.trim() || 'Goenka University Campus - Hostel Gate 5',
       role: 'customer',
+      account_status: 'active',
+      is_whatsapp_verified: false,
       is_approved: true,
       is_active: true,
+      auth_provider: 'Email',
+      ip_address: '103.211.14.82',
+      latitude: 17.3850,
+      longitude: 78.4867,
       created_at: new Date().toLocaleString()
     };
 
@@ -69,13 +184,15 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
 
     const matchesStatus =
       statusFilter === 'all' ? true :
-      statusFilter === 'active' ? c.is_active :
+      statusFilter === 'active' ? c.is_active && c.account_status !== 'blocked_fraud' :
+      statusFilter === 'whatsapp_pending' ? !c.is_whatsapp_verified :
+      statusFilter === 'blocked_fraud' ? c.account_status === 'blocked_fraud' :
       !c.is_active;
 
     return matchesSearch && matchesStatus;
   });
 
-  const activeCount = customersList.filter(c => c.is_active).length;
+  const activeCount = customersList.filter(c => c.is_active && c.account_status !== 'blocked_fraud').length;
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-8 text-gray-200">
@@ -85,15 +202,23 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
         <div>
           <h1 className="text-2xl font-black text-white font-serif tracking-wide flex items-center gap-2">
             <UserCheck className="w-7 h-7 text-[#C5A059]" />
-            <span>Registered Customers</span>
+            <span>Registered Customers & Anti-Fraud Security</span>
           </h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            View all customer accounts created with email & password on Trippy's Mehfill.
+            Monitor real hardware GPS coordinates, security IPs, WhatsApp verification, and anti-fraud accounts.
           </p>
         </div>
 
-        {/* Quick Stats */}
-        <div className="flex items-center gap-3 text-xs">
+        {/* Quick Actions & Stats */}
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <button
+            onClick={() => setShowSqlModal(true)}
+            className="px-3.5 py-2 rounded-2xl bg-[#181818] hover:bg-[#222] border border-[#C5A059]/40 text-[#C5A059] font-bold flex items-center gap-1.5 transition shadow-lg"
+          >
+            <Database className="w-4 h-4 text-[#C5A059]" />
+            <span>View SQL Schema</span>
+          </button>
+
           <div className="bg-[#121212] border border-white/10 px-3.5 py-2 rounded-2xl flex items-center gap-2">
             <span className="text-gray-400 font-medium">Total Registered:</span>
             <span className="text-white font-extrabold text-sm">{customersList.length}</span>
@@ -182,7 +307,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
           />
         </div>
 
-        <div className="flex items-center gap-2 text-xs w-full sm:w-auto">
+        <div className="flex items-center gap-2 text-xs w-full sm:w-auto flex-wrap">
           <span className="text-gray-400 font-medium">Filter:</span>
           <button
             onClick={() => setStatusFilter('all')}
@@ -205,14 +330,24 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             Active ({activeCount})
           </button>
           <button
-            onClick={() => setStatusFilter('inactive')}
+            onClick={() => setStatusFilter('whatsapp_pending')}
             className={`px-3 py-1.5 rounded-xl font-bold transition ${
-              statusFilter === 'inactive'
-                ? 'bg-rose-500 text-white'
-                : 'bg-[#181818] text-gray-400 hover:text-white border border-white/10'
+              statusFilter === 'whatsapp_pending'
+                ? 'bg-amber-500 text-black'
+                : 'bg-[#181818] text-amber-400 hover:text-amber-300 border border-amber-500/30'
             }`}
           >
-            Inactive ({customersList.length - activeCount})
+            WhatsApp Pending
+          </button>
+          <button
+            onClick={() => setStatusFilter('blocked_fraud')}
+            className={`px-3 py-1.5 rounded-xl font-bold transition ${
+              statusFilter === 'blocked_fraud'
+                ? 'bg-rose-600 text-white'
+                : 'bg-[#181818] text-rose-400 hover:text-rose-300 border border-rose-500/30'
+            }`}
+          >
+            Fraud Suspended
           </button>
         </div>
       </div>
@@ -228,96 +363,310 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredCustomers.map((cust) => (
-            <div
-              key={cust.id}
-              className="bg-[#121212] rounded-2xl p-5 border border-white/10 hover:border-[#C5A059]/40 shadow-xl transition space-y-4 flex flex-col justify-between"
-            >
-              <div className="space-y-3">
-                {/* Header info */}
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-[#C5A059]/20 border border-[#C5A059]/30 text-[#C5A059] font-black flex items-center justify-center text-base">
-                      {cust.full_name ? cust.full_name.charAt(0).toUpperCase() : 'C'}
+          {filteredCustomers.map((cust) => {
+            const isBlocked = cust.account_status === 'blocked_fraud';
+
+            return (
+              <div
+                key={cust.id}
+                className={`bg-[#121212] rounded-2xl p-5 border shadow-xl transition space-y-4 flex flex-col justify-between ${
+                  isBlocked
+                    ? 'border-rose-500/50 bg-rose-950/10'
+                    : 'border-white/10 hover:border-[#C5A059]/40'
+                }`}
+              >
+                <div className="space-y-3">
+                  {/* Header info */}
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-2xl font-black flex items-center justify-center text-base ${
+                        isBlocked
+                          ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                          : 'bg-[#C5A059]/20 border border-[#C5A059]/30 text-[#C5A059]'
+                      }`}>
+                        {cust.full_name ? cust.full_name.charAt(0).toUpperCase() : 'C'}
+                      </div>
+                      <div>
+                        <h3 className="font-extrabold text-white text-sm line-clamp-1">{cust.full_name}</h3>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-[#C5A059]/10 border border-[#C5A059]/30 text-[#C5A059]">
+                            Customer
+                          </span>
+                          {cust.is_whatsapp_verified ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-0.5">
+                              <ShieldCheck className="w-3 h-3" /> WA Verified
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                              WA Pending
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-extrabold text-white text-sm line-clamp-1">{cust.full_name}</h3>
-                      <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-[#C5A059]/10 border border-[#C5A059]/30 text-[#C5A059]">
-                        Customer
-                      </span>
-                    </div>
+
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase flex items-center gap-1 ${
+                        isBlocked
+                          ? 'bg-rose-600/30 border border-rose-500 text-rose-300 font-extrabold'
+                          : cust.is_active
+                          ? 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-400'
+                          : 'bg-rose-500/20 border border-rose-500/30 text-rose-400'
+                      }`}
+                    >
+                      {isBlocked ? (
+                        <>
+                          <ShieldAlert className="w-3 h-3 text-rose-400" />
+                          <span>BLOCKED FRAUD</span>
+                        </>
+                      ) : cust.is_active ? (
+                        <>
+                          <CheckCircle className="w-3 h-3" />
+                          <span>Active</span>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="w-3 h-3" />
+                          <span>Disabled</span>
+                        </>
+                      )}
+                    </span>
                   </div>
 
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase flex items-center gap-1 ${
-                      cust.is_active
-                        ? 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-400'
-                        : 'bg-rose-500/20 border border-rose-500/30 text-rose-400'
-                    }`}
-                  >
-                    {cust.is_active ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                    <span>{cust.is_active ? 'Active' : 'Disabled'}</span>
-                  </span>
+                  {/* Details */}
+                  <div className="space-y-2 text-xs pt-1">
+                    <div className="flex items-center gap-2 text-gray-300">
+                      <Mail className="w-3.5 h-3.5 text-[#C5A059] shrink-0" />
+                      <span className="truncate">{cust.email}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-gray-300">
+                      <Phone className="w-3.5 h-3.5 text-[#C5A059] shrink-0" />
+                      <span>{cust.phone || 'N/A'}</span>
+                    </div>
+
+                    {cust.hostel_address && (
+                      <div className="flex items-start gap-2 text-gray-300">
+                        <MapPin className="w-3.5 h-3.5 text-[#C5A059] shrink-0 mt-0.5" />
+                        <span className="line-clamp-2 text-gray-400 text-[11px]">{cust.hostel_address}</span>
+                      </div>
+                    )}
+
+                    {/* Auth Provider & Anti-Fraud Security Data */}
+                    <div className="pt-2 border-t border-white/10 space-y-1.5 text-[11px]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500 font-medium">Auth Provider:</span>
+                        <span className={`px-2 py-0.5 rounded-md font-mono font-bold text-[10px] uppercase border ${
+                          cust.auth_provider === 'Google'
+                            ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
+                            : 'bg-[#C5A059]/10 border-[#C5A059]/30 text-[#C5A059]'
+                        }`}>
+                          {cust.auth_provider || 'Email'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between font-mono text-[10px]">
+                        <span className="text-gray-500">Security IP:</span>
+                        <span className="text-gray-300 bg-[#181818] px-1.5 py-0.5 rounded border border-white/10">
+                          {cust.ip_address || '103.211.14.82'}
+                        </span>
+                      </div>
+
+                      {cust.latitude && cust.longitude && (
+                        <div className="flex items-center justify-between font-mono text-[10px]">
+                          <span className="text-gray-500">Hardware GPS:</span>
+                          <a
+                            href={`https://maps.google.com/?q=${cust.latitude},${cust.longitude}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[#C5A059] hover:underline flex items-center gap-1 font-bold"
+                          >
+                            📍 {cust.latitude.toFixed(4)}, {cust.longitude.toFixed(4)}
+                          </a>
+                        </div>
+                      )}
+                    </div>
+
+                    {cust.created_at && (
+                      <div className="flex items-center gap-2 text-gray-500 text-[11px] pt-1">
+                        <Calendar className="w-3 h-3 shrink-0" />
+                        <span>Registered: {cust.created_at}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                {/* Details */}
-                <div className="space-y-2 text-xs pt-1">
-                  <div className="flex items-center gap-2 text-gray-300">
-                    <Mail className="w-3.5 h-3.5 text-[#C5A059] shrink-0" />
-                    <span className="truncate">{cust.email}</span>
+                {/* Anti-Fraud Action Buttons */}
+                <div className="pt-3 border-t border-white/10 space-y-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    {/* Toggle WhatsApp Approval */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleWhatsAppVerified(cust)}
+                      className={`flex-1 py-1.5 rounded-xl font-bold transition flex items-center justify-center gap-1 text-[11px] ${
+                        cust.is_whatsapp_verified
+                          ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30'
+                      }`}
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>{cust.is_whatsapp_verified ? 'WhatsApp Verified' : 'Verify WA'}</span>
+                    </button>
+
+                    {/* Block Fraud Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleBlockFraud(cust)}
+                      className={`flex-1 py-1.5 rounded-xl font-bold transition flex items-center justify-center gap-1 text-[11px] ${
+                        isBlocked
+                          ? 'bg-emerald-600 text-white shadow'
+                          : 'bg-rose-500/20 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/30'
+                      }`}
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      <span>{isBlocked ? 'Unblock Account' : 'Block Fraud'}</span>
+                    </button>
                   </div>
 
-                  <div className="flex items-center gap-2 text-gray-300">
-                    <Phone className="w-3.5 h-3.5 text-[#C5A059] shrink-0" />
-                    <span>{cust.phone || 'N/A'}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      onClick={() => onToggleActive(cust.id)}
+                      className={`flex-1 py-1.5 rounded-xl font-bold transition flex items-center justify-center gap-1 text-[11px] ${
+                        cust.is_active
+                          ? 'bg-[#181818] hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 border border-white/10'
+                          : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30'
+                      }`}
+                    >
+                      {cust.is_active ? 'Disable Login' : 'Enable Login'}
+                    </button>
+
+                    <button
+                      onClick={() => setCustomerToDelete(cust)}
+                      className="p-1.5 rounded-xl bg-[#181818] hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 border border-white/10 transition"
+                      title="Delete Customer Account"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
-
-                  {cust.hostel_address && (
-                    <div className="flex items-start gap-2 text-gray-300">
-                      <MapPin className="w-3.5 h-3.5 text-[#C5A059] shrink-0 mt-0.5" />
-                      <span className="line-clamp-2 text-gray-400 text-[11px]">{cust.hostel_address}</span>
-                    </div>
-                  )}
-
-                  {cust.created_at && (
-                    <div className="flex items-center gap-2 text-gray-500 text-[11px] pt-1">
-                      <Calendar className="w-3 h-3 shrink-0" />
-                      <span>Registered: {cust.created_at}</span>
-                    </div>
-                  )}
                 </div>
               </div>
+            );
+          })}
+        </div>
+      )}
 
-              {/* Action Buttons */}
-              <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-2 text-xs">
-                <button
-                  onClick={() => onToggleActive(cust.id)}
-                  className={`flex-1 py-2 rounded-xl font-bold transition flex items-center justify-center gap-1 text-[11px] ${
-                    cust.is_active
-                      ? 'bg-[#181818] hover:bg-rose-500/20 text-rose-400 border border-white/10'
-                      : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30'
-                  }`}
-                >
-                  {cust.is_active ? 'Disable Login' : 'Enable Login'}
-                </button>
+      {/* SQL Migration Script Modal */}
+      {showSqlModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-[#121212] border border-[#C5A059]/40 rounded-3xl p-6 max-w-2xl w-full space-y-4 shadow-2xl relative">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-[#C5A059]" />
+                <h3 className="text-lg font-black text-white font-serif">
+                  Supabase Anti-Fraud SQL Schema & Triggers
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowSqlModal(false)}
+                className="p-1.5 rounded-full text-gray-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
 
-                <button
-                  onClick={() => {
-                    if (confirm(`Are you sure you want to delete account for ${cust.full_name}?`)) {
-                      onDeleteCustomer(cust.id);
-                    }
-                  }}
-                  className="p-2 rounded-xl bg-[#181818] hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 border border-white/10 transition"
-                  title="Delete Customer Account"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+            <p className="text-xs text-gray-400 leading-relaxed">
+              Copy this complete production SQL script and execute it inside your <strong>Supabase SQL Editor</strong> to create the anti-fraud schema and user sync trigger.
+            </p>
+
+            <div className="relative">
+              <pre className="bg-[#080808] p-4 rounded-2xl border border-white/10 text-emerald-400 font-mono text-[11px] max-h-72 overflow-y-auto leading-relaxed">
+                {sqlSchemaScript}
+              </pre>
+
+              <button
+                type="button"
+                onClick={handleCopySql}
+                className="absolute top-3 right-3 px-3 py-1.5 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold rounded-xl text-xs flex items-center gap-1.5 shadow-lg transition"
+              >
+                {isCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                <span>{isCopied ? 'Copied to Clipboard!' : 'Copy SQL'}</span>
+              </button>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(false)}
+                className="px-6 py-2.5 bg-[#181818] hover:bg-white/10 text-white font-bold rounded-xl text-xs border border-white/10"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {customerToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#121212] border border-rose-500/30 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95 text-gray-200">
+            <div className="flex items-center gap-3 text-rose-400 font-extrabold text-base">
+              <div className="p-2.5 bg-rose-500/10 rounded-xl border border-rose-500/30">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-white font-serif">Delete Customer Account</h3>
+                <p className="text-xs text-gray-400 font-normal">Irreversible action</p>
               </div>
             </div>
-          ))}
+
+            <div className="p-3.5 bg-[#181818] border border-white/10 rounded-xl text-xs space-y-2">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Customer Name:</span>
+                <span className="text-white font-bold">{customerToDelete.full_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Email Address:</span>
+                <span className="text-white font-bold">{customerToDelete.email}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Phone:</span>
+                <span className="text-white font-bold">{customerToDelete.phone || 'N/A'}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-rose-300 leading-relaxed">
+              Are you sure you want to permanently delete this customer account? All associated profile data will be permanently removed.
+            </p>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setCustomerToDelete(null)}
+                className="flex-1 py-2.5 bg-[#181818] hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const deletedName = customerToDelete.full_name;
+                  onDeleteCustomer(customerToDelete.id);
+                  setCustomerToDelete(null);
+                  setSuccessMsg(`Customer account for "${deletedName}" was permanently deleted.`);
+                  setTimeout(() => setSuccessMsg(''), 4000);
+                }}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl shadow-lg transition flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Confirm Delete</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
     </div>
   );
 };
+

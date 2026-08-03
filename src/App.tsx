@@ -11,6 +11,7 @@ import { CartDrawer } from './components/customer/CartDrawer';
 import { OrderTrackerModal } from './components/customer/OrderTrackerModal';
 import { CustomerFeedbackModal } from './components/customer/CustomerFeedbackModal';
 import { AuthModal } from './components/common/AuthModal';
+import { WhatsAppVerificationGate } from './components/common/WhatsAppVerificationGate';
 
 // Admin Components
 import { AdminHeaderNav, AdminTab } from './components/admin/AdminHeaderNav';
@@ -25,7 +26,14 @@ import { FeedbackView } from './components/admin/FeedbackView';
 import { DriverStatsView } from './components/admin/DriverStatsView';
 import { StaffDriversView } from './components/admin/StaffDriversView';
 import { CustomersView } from './components/admin/CustomersView';
+import { GalleryView } from './components/admin/GalleryView';
 import { SettingsView } from './components/admin/SettingsView';
+
+// Customer Components
+import { GallerySection } from './components/customer/GallerySection';
+import { OffersSection } from './components/customer/OffersSection';
+import { RightOrderPanel } from './components/customer/RightOrderPanel';
+import { AdminGuardView } from './components/admin/AdminGuardView';
 
 // Driver Component
 import { DriverView } from './components/driver/DriverView';
@@ -36,11 +44,12 @@ import {
   initialPendingRegistrations,
   initialStaffAndDrivers,
   initialCustomers,
+  initialGalleryItems,
   initialInventory,
   initialFeedback,
   initialBanners
 } from './lib/initialData';
-import { FoodCategory, MenuItem, Order, OrderStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner } from './types';
+import { FoodCategory, MenuItem, Order, OrderStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner, GalleryItem } from './types';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 
 function MainApp() {
@@ -81,6 +90,11 @@ function MainApp() {
     return saved ? JSON.parse(saved) : initialCustomers;
   });
 
+  const [galleryItems, setGalleryItems] = useState<GalleryItem[]>(() => {
+    const saved = localStorage.getItem('trippys_gallery');
+    return saved ? JSON.parse(saved) : initialGalleryItems;
+  });
+
   const [inventory, setInventory] = useState<InventoryItem[]>(() => {
     const saved = localStorage.getItem('trippys_inventory');
     return saved ? JSON.parse(saved) : initialInventory;
@@ -99,6 +113,7 @@ function MainApp() {
   // Modals
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState<'signin' | 'register'>('signin');
   const [activeTrackingOrder, setActiveTrackingOrder] = useState<Order | null>(null);
   const [feedbackOrder, setFeedbackOrder] = useState<Order | null>(null);
 
@@ -108,6 +123,7 @@ function MainApp() {
   useEffect(() => { localStorage.setItem('trippys_pending', JSON.stringify(pendingUsers)); }, [pendingUsers]);
   useEffect(() => { localStorage.setItem('trippys_staff', JSON.stringify(staffList)); }, [staffList]);
   useEffect(() => { localStorage.setItem('trippys_customers', JSON.stringify(customersList)); }, [customersList]);
+  useEffect(() => { localStorage.setItem('trippys_gallery', JSON.stringify(galleryItems)); }, [galleryItems]);
   useEffect(() => { localStorage.setItem('trippys_inventory', JSON.stringify(inventory)); }, [inventory]);
   useEffect(() => { localStorage.setItem('trippys_feedback', JSON.stringify(feedback)); }, [feedback]);
   useEffect(() => { localStorage.setItem('trippys_banners', JSON.stringify(banners)); }, [banners]);
@@ -141,7 +157,30 @@ function MainApp() {
     loadSupabaseData();
   }, []);
 
+  // Auto prompt Sign In modal for unauthenticated visitors on initial load
+  useEffect(() => {
+    if (!user) {
+      setIsAuthModalOpen(true);
+    }
+  }, [user]);
+
+  // Logo Click Handler: Navigates to home/menu, resets filters, scrolls up, opens sign in if unauthenticated
+  const handleLogoClick = () => {
+    setActiveSection('menu');
+    setSearchQuery('');
+    setSelectedCategory('All');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (!user) {
+      setIsAuthModalOpen(true);
+    }
+  };
+
   // Handlers
+  const handleOrderPlaced = (newOrder: Order) => {
+    setOrders(prev => [newOrder, ...prev]);
+    setActiveTrackingOrder(newOrder);
+  };
+
   const handleUpdateOrderStatus = (orderId: string, status: OrderStatus, driverId?: string, driverName?: string) => {
     setOrders(prev =>
       prev.map(o => {
@@ -225,10 +264,15 @@ function MainApp() {
           if (userOrder) setActiveTrackingOrder(userOrder);
           else alert("No recent orders found.");
         }}
+        onLogoClick={handleLogoClick}
+        onOpenAuth={(tab = 'signin') => {
+          setAuthModalTab(tab);
+          setIsAuthModalOpen(true);
+        }}
       />
 
       {/* Admin ERP Sub-Navigation Header */}
-      {(activeSection === 'admin' || ((user?.role === 'admin' || user?.role === 'staff') && activeSection !== 'menu' && activeSection !== 'driver')) && (
+      {activeSection === 'admin' && user?.role === 'admin' && (
         <AdminHeaderNav
           activeTab={adminTab}
           setActiveTab={setAdminTab}
@@ -246,106 +290,185 @@ function MainApp() {
             setSearchQuery={setSearchQuery}
             selectedLocation={selectedLocation}
             setSelectedLocation={setSelectedLocation}
+            onLogoClick={handleLogoClick}
           />
 
-          <CategoryPills
-            selectedCategory={selectedCategory}
-            onSelectCategory={setSelectedCategory}
-          />
+          {/* Promotional Discount Codes & Offers Section */}
+          <OffersSection />
 
-          {/* Today's Specials */}
-          {!searchQuery && selectedCategory === 'All' && (
-            <TodaysSpecials
-              specials={todaysSpecials}
-              onRequireAuth={() => setIsAuthModalOpen(true)}
+          {/* Interactive Public Gallery Section with Fullscreen Lightbox Zoom */}
+          <GallerySection galleryItems={galleryItems} />
+
+          {/* Category Pills & Main Food Menu Section with Persistent Right-Side Order Summary Panel */}
+          <div id="menu-section" className="pt-6 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <CategoryPills
+              selectedCategory={selectedCategory}
+              onSelectCategory={setSelectedCategory}
             />
-          )}
 
-          {/* Main Menu Grid */}
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-8">
-            <h2 className="text-xl sm:text-2xl font-black text-[#C5A059] font-serif mb-4 tracking-wide">
-              Today's Menu
-            </h2>
-
-            {filteredDishes.length === 0 ? (
-              <div className="text-center py-12 bg-[#121212] rounded-2xl border border-white/10 shadow-xl">
-                <p className="text-gray-200 font-bold">No dishes found matching your search.</p>
-                <p className="text-xs text-gray-500 mt-1">Try searching for "biryani" or selecting another category.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                {filteredDishes.map((dish) => (
-                  <MenuCard
-                    key={dish.id}
-                    item={dish}
-                    onRequireAuth={() => setIsAuthModalOpen(true)}
-                  />
-                ))}
+            {/* Unauthenticated User Prompt Banner */}
+            {!user && (
+              <div className="max-w-2xl mx-auto my-6">
+                <div className="bg-[#181818] border border-orange-500/30 rounded-3xl p-6 text-center shadow-xl space-y-3">
+                  <p className="text-sm sm:text-base font-extrabold text-white">
+                    Sign in or Register to view prices and place an order.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setAuthModalTab('signin');
+                      setIsAuthModalOpen(true);
+                    }}
+                    className="px-8 py-3 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold text-sm rounded-2xl shadow-lg transition transform active:scale-95"
+                  >
+                    Sign In to Order
+                  </button>
+                </div>
               </div>
             )}
+
+            {/* Split Main Area: Left Menu & Right Sticky Live Order Summary Panel */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 my-6">
+              
+              {/* Left Column: Specials & Menu Items */}
+              <div className="lg:col-span-7 xl:col-span-8 space-y-8">
+                {/* Today's Specials */}
+                {!searchQuery && selectedCategory === 'All' && (
+                  <TodaysSpecials
+                    specials={todaysSpecials}
+                    onRequireAuth={() => {
+                      setAuthModalTab('signin');
+                      setIsAuthModalOpen(true);
+                    }}
+                  />
+                )}
+
+                {/* Main Menu Grid */}
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-black text-[#C5A059] font-serif mb-4 tracking-wide">
+                    Today's Menu
+                  </h2>
+
+                  {filteredDishes.length === 0 ? (
+                    <div className="text-center py-12 bg-[#121212] rounded-2xl border border-white/10 shadow-xl">
+                      <p className="text-gray-200 font-bold">No dishes found matching your search.</p>
+                      <p className="text-xs text-gray-500 mt-1">Try searching for "biryani" or selecting another category.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+                      {filteredDishes.map((dish) => (
+                        <MenuCard
+                          key={dish.id}
+                          item={dish}
+                          onRequireAuth={() => {
+                            setAuthModalTab('signin');
+                            setIsAuthModalOpen(true);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Sticky Live Order Summary & Checkout Panel */}
+              <div className="hidden lg:block lg:col-span-5 xl:col-span-4">
+                <RightOrderPanel
+                  onOrderSuccess={handleOrderPlaced}
+                  onRequireAuth={() => {
+                    setAuthModalTab('signin');
+                    setIsAuthModalOpen(true);
+                  }}
+                  existingOrders={orders}
+                />
+              </div>
+
+            </div>
           </div>
         </main>
       )}
 
-      {/* 2. ADMIN ERP MODULE */}
+      {/* 2. ADMIN ERP MODULE (STRICTLY ADMIN ONLY) */}
       {activeSection === 'admin' && (
-        <main className="flex-1 pb-16">
-          {adminTab === 'dashboard' && <DashboardView orders={orders} feedback={feedback} />}
-          {adminTab === 'live_orders' && (
-            <LiveOrdersView orders={orders} drivers={drivers} onUpdateOrderStatus={handleUpdateOrderStatus} />
-          )}
-          {adminTab === 'kitchen' && (
-            <KitchenView orders={orders} onUpdateOrderStatus={handleUpdateOrderStatus} />
-          )}
-          {adminTab === 'registrations' && (
-            <PendingRegistrationsView pendingUsers={pendingUsers} onApprove={handleApproveUser} onReject={handleRejectUser} />
-          )}
-          {adminTab === 'menu' && (
-            <MenuManagerView
-              menuItems={menuItems}
-              onSaveDish={(dish) => setMenuItems(prev => {
-                const exists = prev.some(m => m.id === dish.id);
-                return exists ? prev.map(m => m.id === dish.id ? dish : m) : [dish, ...prev];
-              })}
-              onDeleteDish={(id) => setMenuItems(prev => prev.filter(m => m.id !== id))}
-              onToggleAvailable={(id) => setMenuItems(prev => prev.map(m => m.id === id ? { ...m, is_available: !m.is_available } : m))}
-              onToggleSpecial={(id) => setMenuItems(prev => prev.map(m => m.id === id ? { ...m, is_todays_special: !m.is_todays_special } : m))}
-            />
-          )}
-          {adminTab === 'inventory' && (
-            <InventoryView
-              inventory={inventory}
-              menuItems={menuItems}
-              onUpdateQuantity={(id, delta) => setInventory(prev => prev.map(i => i.id === id ? { ...i, quantity: Math.max(0, i.quantity + delta) } : i))}
-              onAddStockItem={(item) => setInventory(prev => [item, ...prev])}
-            />
-          )}
-          {adminTab === 'history' && <OrderHistoryView orders={orders} drivers={drivers} />}
-          {adminTab === 'feedback' && <FeedbackView feedback={feedback} />}
-          {adminTab === 'driver_stats' && <DriverStatsView drivers={drivers} orders={orders} />}
-          {adminTab === 'staff' && (
-            <StaffDriversView
-              staffList={staffList}
-              onAddStaff={(s) => setStaffList(prev => [...prev, s])}
-              onToggleActive={(id) => setStaffList(prev => prev.map(s => s.id === id ? { ...s, is_active: !s.is_active } : s))}
-              onDeleteStaff={(id) => setStaffList(prev => prev.filter(s => s.id !== id))}
-            />
-          )}
-          {adminTab === 'customers' && (
-            <CustomersView
-              customersList={customersList}
-              onAddCustomer={(c) => setCustomersList(prev => [...prev, c])}
-              onToggleActive={(id) => setCustomersList(prev => prev.map(c => c.id === id ? { ...c, is_active: !c.is_active } : c))}
-              onDeleteCustomer={(id) => setCustomersList(prev => prev.filter(c => c.id !== id))}
-            />
-          )}
-          {adminTab === 'settings' && (
-            <SettingsView
-              banners={banners}
-              onAddBanner={(b) => setBanners(prev => [b, ...prev])}
-            />
-          )}
-        </main>
+        user?.role === 'admin' ? (
+          <main className="flex-1 pb-16">
+            {adminTab === 'dashboard' && <DashboardView orders={orders} feedback={feedback} />}
+            {adminTab === 'live_orders' && (
+              <LiveOrdersView orders={orders} drivers={drivers} onUpdateOrderStatus={handleUpdateOrderStatus} />
+            )}
+            {adminTab === 'kitchen' && (
+              <KitchenView orders={orders} onUpdateOrderStatus={handleUpdateOrderStatus} />
+            )}
+            {adminTab === 'registrations' && (
+              <PendingRegistrationsView pendingUsers={pendingUsers} onApprove={handleApproveUser} onReject={handleRejectUser} />
+            )}
+            {adminTab === 'menu' && (
+              <MenuManagerView
+                menuItems={menuItems}
+                onSaveDish={(dish) => setMenuItems(prev => {
+                  const exists = prev.some(m => m.id === dish.id);
+                  return exists ? prev.map(m => m.id === dish.id ? dish : m) : [dish, ...prev];
+                })}
+                onDeleteDish={(id) => setMenuItems(prev => prev.filter(m => m.id !== id))}
+                onToggleAvailable={(id) => setMenuItems(prev => prev.map(m => m.id === id ? { ...m, is_available: !m.is_available } : m))}
+                onToggleSpecial={(id) => setMenuItems(prev => prev.map(m => m.id === id ? { ...m, is_todays_special: !m.is_todays_special } : m))}
+              />
+            )}
+            {adminTab === 'gallery' && (
+              <GalleryView
+                galleryItems={galleryItems}
+                onAddGalleryItem={(item) => setGalleryItems(prev => [item, ...prev])}
+                onUpdateGalleryItem={(item) => setGalleryItems(prev => prev.map(g => g.id === item.id ? item : g))}
+                onDeleteGalleryItem={(id) => setGalleryItems(prev => prev.filter(g => g.id !== id))}
+              />
+            )}
+            {adminTab === 'inventory' && (
+              <InventoryView
+                inventory={inventory}
+                menuItems={menuItems}
+                onUpdateQuantity={(id, delta) => setInventory(prev => prev.map(i => i.id === id ? { ...i, quantity: Math.max(0, i.quantity + delta) } : i))}
+                onAddStockItem={(item) => setInventory(prev => [item, ...prev])}
+              />
+            )}
+            {adminTab === 'history' && <OrderHistoryView orders={orders} drivers={drivers} />}
+            {adminTab === 'feedback' && <FeedbackView feedback={feedback} />}
+            {adminTab === 'driver_stats' && <DriverStatsView drivers={drivers} orders={orders} />}
+            {adminTab === 'staff' && (
+              <StaffDriversView
+                staffList={staffList}
+                onAddStaff={(s) => setStaffList(prev => [...prev, s])}
+                onToggleActive={(id) => setStaffList(prev => prev.map(s => s.id === id ? { ...s, is_active: !s.is_active } : s))}
+                onDeleteStaff={(id) => setStaffList(prev => prev.filter(s => s.id !== id))}
+              />
+            )}
+            {adminTab === 'customers' && (
+              <CustomersView
+                customersList={customersList}
+                onAddCustomer={(c) => setCustomersList(prev => [...prev, c])}
+                onToggleActive={(id) => setCustomersList(prev => prev.map(c => c.id === id ? { ...c, is_active: !c.is_active } : c))}
+                onDeleteCustomer={(id) => {
+                  setCustomersList(prev => prev.filter(c => c.id !== id));
+                  if (isSupabaseConfigured) {
+                    supabase.from('profiles').delete().eq('id', id);
+                  }
+                }}
+              />
+            )}
+            {adminTab === 'settings' && (
+              <SettingsView
+                banners={banners}
+                onAddBanner={(b) => setBanners(prev => [b, ...prev])}
+              />
+            )}
+          </main>
+        ) : (
+          <AdminGuardView
+            onRequireAuth={() => {
+              setAuthModalTab('signin');
+              setIsAuthModalOpen(true);
+            }}
+            onGoToMenu={() => setActiveSection('menu')}
+          />
+        )
       )}
 
       {/* 3. DRIVER PORTAL */}
@@ -360,10 +483,11 @@ function MainApp() {
         isOpen={isCartOpen}
         existingOrders={orders}
         onClose={() => setIsCartOpen(false)}
-        onOrderSuccess={(newOrder) => {
-          setOrders(prev => [newOrder, ...prev]);
-          setActiveTrackingOrder(newOrder);
+        onRequireAuth={() => {
+          setAuthModalTab('signin');
+          setIsAuthModalOpen(true);
         }}
+        onOrderSuccess={handleOrderPlaced}
       />
 
       <OrderTrackerModal
@@ -382,17 +506,72 @@ function MainApp() {
 
       <AuthModal
         isOpen={isAuthModalOpen}
+        defaultTab={authModalTab}
         onClose={() => setIsAuthModalOpen(false)}
+        onRegisterSuccess={(newCustomer) => setCustomersList(prev => [newCustomer, ...prev])}
       />
 
+      {/* Mandatory WhatsApp Mobile Verification Gate for Customers */}
+      <WhatsAppVerificationGate />
+
       {/* Footer */}
-      <footer className="bg-[#0d0d0d] text-gray-400 text-xs py-8 px-4 border-t border-white/10 mt-auto">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-center sm:text-left">
-          <div>
-            <p className="font-extrabold text-[#C5A059] text-sm tracking-wide font-serif">Trippy's Mehfill — Hyderabad's Cloud Kitchen ERP</p>
-            <p className="text-[11px] text-gray-500 mt-0.5">Authentic Hyderabadi Dum Biryani, Dosas & Express Delivery</p>
+      <footer className="bg-[#080808] text-gray-400 text-xs py-10 px-4 border-t border-white/10 mt-auto">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
+          {/* Brand Info */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#181818] border border-[#C5A059] flex items-center justify-center p-1 shadow-md">
+                <div className="text-center leading-none">
+                  <div className="text-[8px] font-black text-[#C5A059]">TRIPPY'S</div>
+                  <div className="text-[7px] font-bold text-white">MEHFIL</div>
+                </div>
+              </div>
+              <div>
+                <span className="text-sm font-black text-white font-serif tracking-tight">TRIPPY'S MEHFIL</span>
+                <p className="text-[10px] text-[#C5A059] font-bold uppercase tracking-widest">CLOUD KITCHEN ERP</p>
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
+              Authentic Indian cloud kitchen delivering fresh, flavourful meals to your doorstep & hostel gates.
+            </p>
           </div>
-          <p className="text-[11px] text-gray-500">© 2026 Trippy's Mehfill. All rights reserved.</p>
+
+          {/* Quick Links */}
+          <div className="space-y-2">
+            <p className="text-xs font-black text-white uppercase tracking-wider font-serif">Quick Links</p>
+            <ul className="space-y-1.5 text-xs text-gray-300">
+              <li>
+                <button onClick={() => { setActiveSection('menu'); setTimeout(() => document.getElementById('gallery-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} className="hover:text-[#C5A059] transition">
+                  Gallery
+                </button>
+              </li>
+              <li>
+                <button onClick={() => { setActiveSection('menu'); setTimeout(() => document.getElementById('offers-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} className="hover:text-[#C5A059] transition">
+                  Offers
+                </button>
+              </li>
+              <li>
+                <button onClick={() => { setActiveSection('menu'); setTimeout(() => document.getElementById('menu-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} className="hover:text-[#C5A059] transition">
+                  Menu
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          {/* Contact Details */}
+          <div className="space-y-2">
+            <p className="text-xs font-black text-white uppercase tracking-wider font-serif">Contact</p>
+            <div className="space-y-1.5 text-xs text-gray-300 font-mono">
+              <p>📞 +91 98765 43210</p>
+              <p>✉️ support@trippysmehfill.com</p>
+              <p className="text-gray-500 text-[11px] font-sans">📍 Goenka University Campus - Gate 5, Sector 4, Food Hub, Hyderabad</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="max-w-7xl mx-auto pt-8 mt-8 border-t border-white/10 text-center text-[11px] text-gray-500 flex flex-col sm:flex-row justify-between items-center gap-2">
+          <p>© 2026 Trippy's Mehfill. All rights reserved.</p>
+          <p className="text-[#C5A059]">Hyderabad Cloud Kitchen & Food Delivery Service</p>
         </div>
       </footer>
 

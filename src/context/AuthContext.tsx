@@ -8,7 +8,7 @@ interface AuthContextType {
   loading: boolean;
   signIn: (identifier: string, password: string) => Promise<{ success: boolean; message?: string }>;
   signUp: (data: { full_name: string; phone: string; hostel_address: string; email: string; password: string }) => Promise<{ success: boolean; message?: string }>;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: (email: string, fullName?: string, phone?: string, address?: string, ip?: string, lat?: number, lng?: number) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
   switchDemoRole: (role: UserRole) => void;
@@ -22,8 +22,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (saved) {
       try { return JSON.parse(saved); } catch { return null; }
     }
-    // Default demo user is Admin to show full ERP capabilities immediately
-    return initialStaffAndDrivers[0];
+    return null;
   });
   const [loading, setLoading] = useState(false);
 
@@ -41,7 +40,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        // Fetch or create profile from public.profiles table
+        // Fetch profile from public.profiles table
         const { data: profile } = await supabase
           .from('profiles')
           .select('*')
@@ -49,6 +48,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .single();
 
         if (profile) {
+          // ANTI-FRAUD CHECK: Blocked users are forcefully signed out
+          if (profile.account_status === 'blocked_fraud') {
+            await supabase.auth.signOut();
+            setUser(null);
+            localStorage.removeItem('trippys_user');
+            alert('Account Suspended: Suspicious anti-fraud activity detected on your account.');
+            return;
+          }
           setUser(profile as UserProfile);
         } else {
           // Auto create profile for Google / OAuth user
@@ -58,7 +65,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             full_name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
             phone: session.user.user_metadata?.phone || '',
             role: 'customer',
-            is_approved: true, // Auto approve Google users or keep pending
+            account_status: 'active',
+            is_whatsapp_verified: false,
+            is_approved: true,
             is_active: true
           };
           await supabase.from('profiles').insert([newProfile]);
@@ -88,6 +97,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             u => u.email.toLowerCase() === identifier.toLowerCase() || u.username === identifier || u.phone === identifier
           );
           if (found) {
+            if (found.account_status === 'blocked_fraud') {
+              setLoading(false);
+              return { success: false, message: 'Account Suspended: Suspicious anti-fraud activity detected.' };
+            }
             setUser(found);
             setLoading(false);
             return { success: true };
@@ -104,6 +117,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .single();
 
           if (profile) {
+            if (profile.account_status === 'blocked_fraud') {
+              await supabase.auth.signOut();
+              setLoading(false);
+              return { success: false, message: 'Account Suspended: Suspicious anti-fraud activity detected.' };
+            }
             if (!profile.is_approved && profile.role === 'customer') {
               setLoading(false);
               return { success: false, message: 'Your registration is pending admin approval. Please try again later.' };
@@ -120,6 +138,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
         
         if (staffOrAdmin) {
+          if (staffOrAdmin.account_status === 'blocked_fraud') {
+            setLoading(false);
+            return { success: false, message: 'Account Suspended: Suspicious anti-fraud activity detected.' };
+          }
           setUser(staffOrAdmin);
           setLoading(false);
           return { success: true };
@@ -133,6 +155,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           phone: '9876543210',
           hostel_address: 'Main Campus Hostel, Room 102',
           role: 'customer',
+          account_status: 'active',
+          is_whatsapp_verified: false,
           is_approved: true,
           is_active: true
         };
@@ -209,27 +233,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signInWithGoogle = async () => {
-    if (isSupabaseConfigured) {
-      await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin
-        }
-      });
-    } else {
-      // Demo Google login
+  const signInWithGoogle = async (
+    email: string,
+    fullName?: string,
+    phone?: string,
+    address?: string,
+    ip?: string,
+    lat?: number,
+    lng?: number
+  ) => {
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      if (!cleanEmail || !cleanEmail.includes('@')) {
+        throw new Error('Valid Google email address is required.');
+      }
+
+      const derivedName = fullName?.trim() || cleanEmail.split('@')[0];
+      const formattedName = derivedName.charAt(0).toUpperCase() + derivedName.slice(1);
+
       const googleUser: UserProfile = {
         id: 'g-user-' + Date.now(),
-        email: 'nagapavankumarjavisetty@gmail.com',
-        full_name: 'Javisetty Naga Pavan Kumar',
-        phone: '6301196547',
-        hostel_address: 'Goenka University Gate 5',
-        role: 'admin',
+        email: cleanEmail,
+        full_name: formattedName,
+        phone: phone?.trim() || '9876543210',
+        hostel_address: address?.trim() || 'Campus Hostel Block A',
+        role: 'customer',
         is_approved: true,
-        is_active: true
+        is_active: true,
+        auth_provider: 'Google',
+        ip_address: ip || '103.211.14.82',
+        latitude: lat || 17.3850,
+        longitude: lng || 78.4867,
+        location_city: 'Hyderabad Campus Area',
+        created_at: new Date().toLocaleString()
       };
+
       setUser(googleUser);
+      localStorage.setItem('trippy_erp_user', JSON.stringify(googleUser));
+
+      if (isSupabaseConfigured) {
+        try {
+          await supabase.from('profiles').upsert([googleUser]);
+        } catch {
+          // Non-blocking
+        }
+      }
+    } catch (err: any) {
+      throw new Error(err.message || 'Failed to authenticate Google user account.');
     }
   };
 
