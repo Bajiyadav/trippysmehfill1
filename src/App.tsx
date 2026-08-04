@@ -12,6 +12,7 @@ import { OrderTrackerModal } from './components/customer/OrderTrackerModal';
 import { CustomerFeedbackModal } from './components/customer/CustomerFeedbackModal';
 import { CustomerDashboardModal } from './components/customer/CustomerDashboardModal';
 import { AuthModal } from './components/common/AuthModal';
+import { ConfigErrorScreen, RequireRole } from './components/common/ProtectedRoute';
 import { WhatsAppVerificationGate } from './components/common/WhatsAppVerificationGate';
 
 // Admin Components
@@ -480,10 +481,18 @@ function MainApp() {
         )
       )}
 
-      {/* 3. DRIVER PORTAL */}
+      {/* 3. DRIVER PORTAL (drivers and admins only) */}
       {activeSection === 'driver' && (
         <main className="flex-1 pb-16">
-          <DriverView orders={orders} onUpdateOrderStatus={handleUpdateOrderStatus} />
+          <RequireRole
+            roles={['driver', 'admin']}
+            onRequestSignIn={() => {
+              setAuthModalTab('signin');
+              setIsAuthModalOpen(true);
+            }}
+          >
+            <DriverView orders={orders} onUpdateOrderStatus={handleUpdateOrderStatus} />
+          </RequireRole>
         </main>
       )}
 
@@ -602,11 +611,29 @@ function MainApp() {
   );
 }
 
+/**
+ * Blocks the app with an actionable message when Supabase credentials are
+ * missing, rather than letting every auth call fail with an opaque error.
+ */
+function AppGate() {
+  const { isConfigured, configError } = useAuth();
+
+  if (!isConfigured) {
+    return (
+      <div className="min-h-screen bg-neutral-950 py-24">
+        <ConfigErrorScreen error={configError} />
+      </div>
+    );
+  }
+
+  return <MainApp />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <CartProvider>
-        <MainApp />
+        <AppGate />
       </CartProvider>
     </AuthProvider>
   );

@@ -170,13 +170,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     e.preventDefault();
     setErrorMsg('');
 
+    setIsVerifyingOtp(true);
+
+    // Verifying the code with Supabase establishes the session that signUp then
+    // attaches the password and profile to.
     const verification = await verifyEmailOTPCode(email, enteredOtp);
     if (!verification.success) {
+      setIsVerifyingOtp(false);
       setErrorMsg(verification.message);
       return;
     }
 
-    setIsVerifyingOtp(true);
+    const created = await signUp({
+      full_name: fullName,
+      phone,
+      hostel_address: hostelAddress,
+      email,
+      password
+    });
+
+    setIsVerifyingOtp(false);
+
+    if (!created.success) {
+      setErrorMsg(created.message || 'We could not finish creating your account. Please try again.');
+      return;
+    }
 
     const newCustomer: UserProfile = {
       id: 'c-' + Date.now(),
@@ -187,7 +205,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       role: 'customer',
       account_status: 'active',
       is_whatsapp_verified: false, // Requires 1-click WhatsApp verification to unlock food ordering
-      is_approved: true,
+      is_approved: false, // Awaits admin approval, matching what is stored.
       is_active: true,
       auth_provider: 'Email',
       ip_address: ipAddress,
@@ -197,24 +215,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       created_at: new Date().toLocaleString()
     };
 
-    await signUp({
-      full_name: fullName,
-      phone,
-      hostel_address: hostelAddress,
-      email,
-      password
-    });
-
-    setIsVerifyingOtp(false);
-
     if (onRegisterSuccess) {
       onRegisterSuccess(newCustomer);
     }
 
-    setInfoMsg('Email verified and account created successfully! Welcome to Trippy\'s Mehfill.');
+    setInfoMsg(created.message || 'Email verified and account created successfully!');
     setTimeout(() => {
       onClose();
-    }, 1000);
+    }, 1200);
   };
 
   const handleStartGoogleSignInFlow = () => {
@@ -270,13 +278,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMsg('');
 
     const cleanEmail = googleEmailInput.trim().toLowerCase();
+
+    setIsVerifyingOtp(true);
     const verification = await verifyEmailOTPCode(cleanEmail, enteredOtp);
     if (!verification.success) {
+      setIsVerifyingOtp(false);
       setErrorMsg(verification.message);
       return;
     }
 
-    setIsVerifyingOtp(true);
     try {
       const cleanName = googleFullName.trim() || 'Google Customer';
       const cleanPhone = googlePhone.trim() || '9876543210';
@@ -299,7 +309,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         phone: cleanPhone,
         hostel_address: cleanAddress,
         role: 'customer',
-        is_approved: true,
+        is_approved: false, // Awaits admin approval, matching what is stored.
         is_active: true,
         auth_provider: 'Google',
         ip_address: ipAddress,
