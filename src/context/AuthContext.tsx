@@ -1,270 +1,308 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { UserProfile, UserRole } from '../types';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, supabaseConfigError } from '../lib/supabase';
 import { initialStaffAndDrivers } from '../lib/initialData';
 import { validateRegistration } from '../lib/validation';
+import { toFriendlyAuthError, NOT_CONFIGURED_MESSAGE } from '../lib/authErrors';
+
+export interface AuthResult {
+  success: boolean;
+  message?: string;
+}
 
 interface AuthContextType {
   user: UserProfile | null;
+  session: Session | null;
   loading: boolean;
-  signIn: (identifier: string, password: string) => Promise<{ success: boolean; message?: string }>;
-  signUp: (data: { full_name: string; phone: string; hostel_address: string; email: string; password: string }) => Promise<{ success: boolean; message?: string }>;
-  signInWithGoogle: (email: string, fullName?: string, phone?: string, address?: string, ip?: string, lat?: number, lng?: number) => Promise<void>;
+  /** True until the initial session restore completes. Gate route guards on this. */
+  initializing: boolean;
+  isConfigured: boolean;
+  configError: string | null;
+  signIn: (identifier: string, password: string) => Promise<AuthResult>;
+  signUp: (data: {
+    full_name: string;
+    phone: string;
+    hostel_address: string;
+    email: string;
+    password: string;
+  }) => Promise<AuthResult>;
+  signInWithGoogle: (
+    email: string,
+    fullName?: string,
+    phone?: string,
+    address?: string,
+    ip?: string,
+    lat?: number,
+    lng?: number
+  ) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
   switchDemoRole: (role: UserRole) => void;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 /**
- * Demo auth bypasses real credential verification, so it is a DEVELOPMENT-ONLY
- * convenience. It requires a production build to be excluded (import.meta.env.DEV),
- * an explicit opt-in, and a shared password -- it must never be reachable as a
- * silent fallback when Supabase happens to be unconfigured or returns an error.
+ * Role switching bypasses authentication entirely, so it is a development aid
+ * only and is compiled out of production builds.
  */
-const DEMO_AUTH_ENABLED =
-  Boolean((import.meta as any).env?.DEV) &&
-  (import.meta as any).env?.VITE_ALLOW_DEMO_AUTH === 'true';
-
-const DEMO_AUTH_PASSWORD: string = (import.meta as any).env?.VITE_DEMO_AUTH_PASSWORD || '';
-
-const AUTH_NOT_CONFIGURED =
-  'Sign-in is unavailable because authentication is not configured. Please contact support.';
+const DEMO_ROLE_SWITCH_ENABLED = Boolean((import.meta as any).env?.DEV);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    const saved = localStorage.getItem('trippys_user');
-    if (saved) {
-      try { return JSON.parse(saved); } catch { return null; }
-    }
-    return null;
-  });
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
 
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem('trippys_user', JSON.stringify(user));
-    } else {
-      localStorage.removeItem('trippys_user');
-    }
-  }, [user]);
+  /**
+   * Loads the profile row for an authenticated session. The Supabase session is
+   * the single source of truth for identity -- notably the `role` used for
+   * admin gating, which previously came from localStorage and could simply be
+   * edited by the user.
+   */
+  const loadProfile = useCallback(async (activeSession: Session): Promise<UserProfile | null> => {
+    const authUser = activeSession.user;
 
-  // Sync with Supabase Auth state if Supabase is connected
-  useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authUser.id)
+      .maybeSingle();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        // Fetch profile from public.profiles table
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-
-        if (profile) {
-          // ANTI-FRAUD CHECK: Blocked users are forcefully signed out
-          if (profile.account_status === 'blocked_fraud') {
-            await supabase.auth.signOut();
-            setUser(null);
-            localStorage.removeItem('trippys_user');
-            alert('Account Suspended: Suspicious anti-fraud activity detected on your account.');
-            return;
-          }
-          setUser(profile as UserProfile);
-        } else {
-          // Auto create profile for Google / OAuth user
-          const newProfile: UserProfile = {
-            id: session.user.id,
-            email: session.user.email || '',
-            full_name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
-            phone: session.user.user_metadata?.phone || '',
-            role: 'customer',
-            account_status: 'active',
-            is_whatsapp_verified: false,
-            is_approved: true,
-            is_active: true
-          };
-          await supabase.from('profiles').insert([newProfile]);
-          setUser(newProfile);
-        }
+    if (profile) {
+      if ((profile as UserProfile).account_status === 'blocked_fraud') {
+        await supabase.auth.signOut();
+        return null;
       }
+      return profile as UserProfile;
+    }
+
+    // First sign-in for this auth user: create a minimal profile from metadata.
+    const meta = (authUser.user_metadata || {}) as Record<string, any>;
+    const newProfile: UserProfile = {
+      id: authUser.id,
+      email: authUser.email || '',
+      full_name: meta.full_name || authUser.email?.split('@')[0] || 'Customer',
+      phone: meta.phone || '',
+      hostel_address: meta.hostel_address || '',
+      role: 'customer',
+      account_status: 'active',
+      is_whatsapp_verified: false,
+      is_approved: false, // New customers await admin approval.
+      is_active: true,
+      auth_provider: 'Email',
+      created_at: new Date().toISOString()
+    };
+
+    const { data: inserted } = await supabase
+      .from('profiles')
+      .insert([newProfile])
+      .select()
+      .maybeSingle();
+
+    return (inserted as UserProfile) || newProfile;
+  }, []);
+
+  const applySession = useCallback(
+    async (nextSession: Session | null) => {
+      setSession(nextSession);
+
+      if (!nextSession) {
+        setUser(null);
+        return;
+      }
+
+      try {
+        setUser(await loadProfile(nextSession));
+      } catch (err) {
+        console.error('[Auth] Failed to load profile:', err);
+        setUser(null);
+      }
+    },
+    [loadProfile]
+  );
+
+  // Restore any persisted session on load, then track auth state changes.
+  // supabase-js refreshes the access token automatically (autoRefreshToken).
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setInitializing(false);
+      return;
+    }
+
+    let active = true;
+
+    supabase.auth
+      .getSession()
+      .then(async ({ data }) => {
+        if (!active) return;
+        await applySession(data.session ?? null);
+      })
+      .catch(err => console.error('[Auth] Session restore failed:', err))
+      .finally(() => {
+        if (active) setInitializing(false);
+      });
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!active) return;
+      void applySession(nextSession);
     });
 
     return () => {
+      active = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [applySession]);
 
-  const signIn = async (identifier: string, password: string): Promise<{ success: boolean; message?: string }> => {
+  const signIn = async (identifier: string, password: string): Promise<AuthResult> => {
+    if (!isSupabaseConfigured) {
+      return { success: false, message: NOT_CONFIGURED_MESSAGE };
+    }
+
+    const email = identifier.trim().toLowerCase();
+    if (!email || !password) {
+      return { success: false, message: 'Please enter your email address and password.' };
+    }
+    if (!email.includes('@')) {
+      return { success: false, message: 'Please sign in with your email address.' };
+    }
+
     setLoading(true);
     try {
-      if (isSupabaseConfigured) {
-        // First attempt standard Supabase email login
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: identifier.includes('@') ? identifier : `${identifier}@trippys.com`,
-          password
-        });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
-        if (error) {
-          // A failed credential check is final. Previously this fell through to a
-          // lookup of the built-in staff/admin accounts by email, username or
-          // phone -- with no password check at all -- so anyone who knew an admin
-          // username could sign in as that admin.
-          setLoading(false);
-          return { success: false, message: 'Invalid credentials. Please try again.' };
-        }
-
-        if (data.user) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', data.user.id)
-            .single();
-
-          if (profile) {
-            if (profile.account_status === 'blocked_fraud') {
-              await supabase.auth.signOut();
-              setLoading(false);
-              return { success: false, message: 'Account Suspended: Suspicious anti-fraud activity detected.' };
-            }
-            if (!profile.is_approved && profile.role === 'customer') {
-              setLoading(false);
-              return { success: false, message: 'Your registration is pending admin approval. Please try again later.' };
-            }
-            setUser(profile as UserProfile);
-          }
-        }
-        setLoading(false);
-        return { success: true };
-      } else {
-        // No auth backend configured. Previously ANY identifier with ANY password
-        // (including an empty one) minted a signed-in customer, and the built-in
-        // staff/admin accounts could be assumed with no password whatsoever.
-        if (!DEMO_AUTH_ENABLED) {
-          setLoading(false);
-          return { success: false, message: AUTH_NOT_CONFIGURED };
-        }
-
-        // Dev-only demo mode, and still requires the shared demo password.
-        if (!DEMO_AUTH_PASSWORD || password !== DEMO_AUTH_PASSWORD) {
-          setLoading(false);
-          return { success: false, message: 'Invalid credentials. Please try again.' };
-        }
-
-        const staffOrAdmin = initialStaffAndDrivers.find(
-          u => u.email.toLowerCase() === identifier.toLowerCase() || u.username === identifier || u.phone === identifier
-        );
-
-        if (!staffOrAdmin) {
-          setLoading(false);
-          return { success: false, message: 'Invalid credentials. Please try again.' };
-        }
-
-        if (staffOrAdmin.account_status === 'blocked_fraud') {
-          setLoading(false);
-          return { success: false, message: 'Account Suspended: Suspicious anti-fraud activity detected.' };
-        }
-
-        setUser(staffOrAdmin);
-        setLoading(false);
-        return { success: true };
+      if (error) {
+        return { success: false, message: toFriendlyAuthError(error).message };
       }
+
+      if (data.session) {
+        const profile = await loadProfile(data.session);
+
+        if (!profile) {
+          return {
+            success: false,
+            message: 'Account Suspended: Suspicious anti-fraud activity detected.'
+          };
+        }
+        if (!profile.is_approved && profile.role === 'customer') {
+          await supabase.auth.signOut();
+          return {
+            success: false,
+            message: 'Your registration is pending admin approval. Please try again later.'
+          };
+        }
+
+        setSession(data.session);
+        setUser(profile);
+      }
+
+      return { success: true };
     } catch (e) {
+      return { success: false, message: toFriendlyAuthError(e).message };
+    } finally {
       setLoading(false);
-      return { success: false, message: (e as Error).message };
     }
   };
 
-  const signUp = async (data: { full_name: string; phone: string; hostel_address: string; email: string; password: string }) => {
+  /**
+   * Completes registration AFTER the email OTP has been verified.
+   *
+   * Verifying the code establishes a Supabase session for a passwordless user;
+   * this sets the password they chose and writes their profile row, so they can
+   * subsequently sign in with a password.
+   */
+  const signUp = async (data: {
+    full_name: string;
+    phone: string;
+    hostel_address: string;
+    email: string;
+    password: string;
+  }): Promise<AuthResult> => {
+    if (!isSupabaseConfigured) {
+      return { success: false, message: NOT_CONFIGURED_MESSAGE };
+    }
+
+    const validation = validateRegistration({
+      fullName: data.full_name,
+      email: data.email,
+      phone: data.phone,
+      address: data.hostel_address,
+      password: data.password
+    });
+
+    if (!validation.valid) {
+      return { success: false, message: validation.message };
+    }
+
     setLoading(true);
     try {
-      // Re-validate here as well as in the form: signUp is a public API on the
-      // context and must not trust that a caller already checked its input.
-      const validation = validateRegistration({
-        fullName: data.full_name,
-        email: data.email,
-        phone: data.phone,
-        address: data.hostel_address,
-        password: data.password
-      });
+      const {
+        data: { session: activeSession }
+      } = await supabase.auth.getSession();
 
-      if (!validation.valid) {
-        setLoading(false);
-        return { success: false, message: validation.message };
-      }
-
-      if (isSupabaseConfigured) {
-        const { data: authData, error } = await supabase.auth.signUp({
-          email: data.email,
-          password: data.password,
-          options: {
-            data: {
-              full_name: data.full_name,
-              phone: data.phone,
-              hostel_address: data.hostel_address
-            }
-          }
-        });
-
-        if (error) {
-          setLoading(false);
-          return { success: false, message: error.message };
-        }
-
-        if (authData.user) {
-          const newProfile: UserProfile = {
-            id: authData.user.id,
-            email: data.email,
-            full_name: data.full_name,
-            phone: data.phone,
-            hostel_address: data.hostel_address,
-            role: 'customer',
-            is_approved: false, // New customer registrations go to Admin approval queue!
-            is_active: true
-          };
-
-          await supabase.from('profiles').insert([newProfile]);
-          
-          setLoading(false);
-          return {
-            success: true,
-            message: 'Account created! Your registration is sent for Admin approval before ordering.'
-          };
-        }
-      }
-
-      // No auth backend configured: there is nowhere to durably create an account,
-      // and silently minting a local one granted an approved customer session that
-      // never went through admin approval.
-      if (!DEMO_AUTH_ENABLED) {
-        setLoading(false);
+      if (!activeSession) {
         return {
           success: false,
-          message: 'Registration is unavailable because authentication is not configured. Please contact support.'
+          message: 'Your verification session has expired. Please request a new code.'
         };
       }
 
-      const newCustomer: UserProfile = {
-        id: 'c-' + Date.now(),
-        email: data.email,
-        full_name: data.full_name,
-        phone: data.phone,
-        hostel_address: data.hostel_address,
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: data.password,
+        data: {
+          full_name: data.full_name.trim(),
+          phone: data.phone.trim(),
+          hostel_address: data.hostel_address.trim()
+        }
+      });
+
+      if (updateError) {
+        return { success: false, message: toFriendlyAuthError(updateError).message };
+      }
+
+      const profile: UserProfile = {
+        id: activeSession.user.id,
+        email: data.email.trim().toLowerCase(),
+        full_name: data.full_name.trim(),
+        phone: data.phone.trim(),
+        hostel_address: data.hostel_address.trim(),
         role: 'customer',
-        is_approved: false, // Match the Supabase path: new customers await admin approval.
-        is_active: true
+        account_status: 'active',
+        is_whatsapp_verified: false,
+        is_approved: false, // Admin approval still required before ordering.
+        is_active: true,
+        auth_provider: 'Email',
+        created_at: new Date().toISOString()
       };
-      setUser(newCustomer);
-      setLoading(false);
-      return { success: true, message: 'Account created! Awaiting admin approval.' };
+
+      const { error: profileError } = await supabase.from('profiles').upsert([profile]);
+      if (profileError) {
+        console.error('[Auth] Profile upsert failed:', profileError);
+      }
+
+      setUser(profile);
+      setSession(activeSession);
+
+      return {
+        success: true,
+        message: 'Account created! Your registration is sent for Admin approval before ordering.'
+      };
     } catch (e) {
+      return { success: false, message: toFriendlyAuthError(e).message };
+    } finally {
       setLoading(false);
-      return { success: false, message: (e as Error).message };
     }
   };
 
+  /**
+   * Completes the "continue with Google" flow, which is an email OTP flow under
+   * the hood. It runs only after verifyOtp has established a real session --
+   * it no longer fabricates a signed-in user from form input.
+   */
   const signInWithGoogle = async (
     email: string,
     fullName?: string,
@@ -274,68 +312,73 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     lat?: number,
     lng?: number
   ) => {
-    try {
-      const cleanEmail = email.trim().toLowerCase();
-      if (!cleanEmail || !cleanEmail.includes('@')) {
-        throw new Error('Valid Google email address is required.');
-      }
-
-      const derivedName = fullName?.trim() || cleanEmail.split('@')[0];
-      const formattedName = derivedName.charAt(0).toUpperCase() + derivedName.slice(1);
-
-      const googleUser: UserProfile = {
-        id: 'g-user-' + Date.now(),
-        email: cleanEmail,
-        full_name: formattedName,
-        phone: phone?.trim() || '9876543210',
-        hostel_address: address?.trim() || 'Campus Hostel Block A',
-        role: 'customer',
-        is_approved: true,
-        is_active: true,
-        auth_provider: 'Google',
-        ip_address: ip || '103.211.14.82',
-        latitude: lat || 17.3850,
-        longitude: lng || 78.4867,
-        location_city: 'Hyderabad Campus Area',
-        created_at: new Date().toLocaleString()
-      };
-
-      setUser(googleUser);
-      localStorage.setItem('trippy_erp_user', JSON.stringify(googleUser));
-
-      if (isSupabaseConfigured) {
-        try {
-          await supabase.from('profiles').upsert([googleUser]);
-        } catch {
-          // Non-blocking
-        }
-      }
-    } catch (err: any) {
-      throw new Error(err.message || 'Failed to authenticate Google user account.');
+    if (!isSupabaseConfigured) {
+      throw new Error(NOT_CONFIGURED_MESSAGE);
     }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    const {
+      data: { session: activeSession }
+    } = await supabase.auth.getSession();
+
+    if (!activeSession) {
+      throw new Error('Your verification session has expired. Please request a new code.');
+    }
+
+    const derivedName = fullName?.trim() || cleanEmail.split('@')[0];
+
+    const profile: UserProfile = {
+      id: activeSession.user.id,
+      email: cleanEmail,
+      full_name: derivedName.charAt(0).toUpperCase() + derivedName.slice(1),
+      phone: phone?.trim() || '',
+      hostel_address: address?.trim() || '',
+      role: 'customer',
+      account_status: 'active',
+      is_whatsapp_verified: false,
+      is_approved: false,
+      is_active: true,
+      auth_provider: 'Google',
+      ip_address: ip,
+      latitude: lat,
+      longitude: lng,
+      created_at: new Date().toISOString()
+    };
+
+    const { error } = await supabase.from('profiles').upsert([profile]);
+    if (error) console.error('[Auth] Profile upsert failed:', error);
+
+    setSession(activeSession);
+    setUser(profile);
   };
 
   const signOut = async () => {
     try {
       if (isSupabaseConfigured) {
+        // 'local' clears this browser's session; supabase-js also drops the
+        // persisted tokens from storage.
         await supabase.auth.signOut();
       }
     } catch (e) {
-      console.error("Signout error", e);
-    }
-    setUser(null);
-    localStorage.removeItem('trippys_user');
-    localStorage.removeItem('trippy_erp_user');
-    try {
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const key = localStorage.key(i);
-        if (key && (key.includes('supabase') || key.includes('auth') || key.includes('user') || key.includes('sb-'))) {
-          localStorage.removeItem(key);
-        }
+      console.error('[Auth] Sign out error:', e);
+    } finally {
+      setUser(null);
+      setSession(null);
+      try {
+        sessionStorage.clear();
+      } catch {
+        // Storage can be unavailable in private browsing modes.
       }
-      sessionStorage.clear();
-    } catch {
-      // ignore
+    }
+  };
+
+  const refreshProfile = async () => {
+    if (!session) return;
+    try {
+      setUser(await loadProfile(session));
+    } catch (e) {
+      console.error('[Auth] Profile refresh failed:', e);
     }
   };
 
@@ -345,11 +388,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(updated);
 
     if (isSupabaseConfigured) {
-      await supabase.from('profiles').update(data).eq('id', user.id);
+      const { error } = await supabase.from('profiles').update(data).eq('id', user.id);
+      if (error) console.error('[Auth] Profile update failed:', error);
     }
   };
 
   const switchDemoRole = (role: UserRole) => {
+    if (!DEMO_ROLE_SWITCH_ENABLED) {
+      console.warn('[Auth] Demo role switching is disabled outside development.');
+      return;
+    }
     const roleUser = initialStaffAndDrivers.find(u => u.role === role) || {
       id: 'demo-' + role,
       email: `${role}@trippys.com`,
@@ -366,13 +414,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         user,
+        session,
         loading,
+        initializing,
+        isConfigured: isSupabaseConfigured,
+        configError: supabaseConfigError,
         signIn,
         signUp,
         signInWithGoogle,
         signOut,
         updateProfile,
-        switchDemoRole
+        switchDemoRole,
+        refreshProfile
       }}
     >
       {children}
