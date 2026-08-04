@@ -4,6 +4,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { Resend } from 'resend';
 import { createOtpStore } from './otpStore';
+import { validateEmail, validateFullName, escapeHtml } from './src/lib/validation';
 
 // Load .env.local first (Vite convention), then .env as a fallback.
 // dotenv never overwrites an already-set variable, so .env.local wins.
@@ -28,7 +29,7 @@ function buildOtpEmailHtml(otp: string, fullName?: string) {
 
       <div style="background-color: #181818; padding: 20px; border-radius: 12px; border: 1px solid #282828; text-align: center;">
         <h2 style="font-size: 16px; color: #e5e7eb; margin-top: 0;">Registration Verification OTP</h2>
-        <p style="color: #9ca3af; font-size: 14px;">Hello ${fullName || 'Valued Customer'},</p>
+        <p style="color: #9ca3af; font-size: 14px;">Hello ${escapeHtml(fullName || 'Valued Customer')},</p>
         <p style="color: #d1d5db; font-size: 14px; margin-bottom: 20px;">Use the following 6-digit Security OTP code to complete your registration:</p>
 
         <div style="background-color: #000000; display: inline-block; padding: 14px 28px; border-radius: 10px; border: 2px solid #f97316; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #f97316; font-family: monospace;">
@@ -61,10 +62,20 @@ async function startServer() {
   app.post('/api/send-verification-otp', async (req, res) => {
     try {
       const email = normalizeEmail(req.body?.email);
-      const fullName = typeof req.body?.fullName === 'string' ? req.body.fullName : '';
+      const fullName = typeof req.body?.fullName === 'string' ? req.body.fullName.trim() : '';
 
-      if (!email) {
-        return res.status(400).json({ success: false, error: 'A valid email address is required.' });
+      // Server-side enforcement. The client runs the same rules for fast feedback,
+      // but anyone can skip the UI, so this is the check that actually counts.
+      const emailCheck = validateEmail(email);
+      if (!emailCheck.valid) {
+        return res.status(400).json({ success: false, error: emailCheck.message });
+      }
+
+      if (fullName) {
+        const nameCheck = validateFullName(fullName);
+        if (!nameCheck.valid) {
+          return res.status(400).json({ success: false, error: nameCheck.message });
+        }
       }
 
       const resendApiKey = process.env.RESEND_API_KEY;
