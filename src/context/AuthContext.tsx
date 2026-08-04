@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile, UserRole } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { initialStaffAndDrivers } from '../lib/initialData';
+import { validateRegistration } from '../lib/validation';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -15,6 +16,21 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+/**
+ * Demo auth bypasses real credential verification, so it is a DEVELOPMENT-ONLY
+ * convenience. It requires a production build to be excluded (import.meta.env.DEV),
+ * an explicit opt-in, and a shared password -- it must never be reachable as a
+ * silent fallback when Supabase happens to be unconfigured or returns an error.
+ */
+const DEMO_AUTH_ENABLED =
+  Boolean((import.meta as any).env?.DEV) &&
+  (import.meta as any).env?.VITE_ALLOW_DEMO_AUTH === 'true';
+
+const DEMO_AUTH_PASSWORD: string = (import.meta as any).env?.VITE_DEMO_AUTH_PASSWORD || '';
+
+const AUTH_NOT_CONFIGURED =
+  'Sign-in is unavailable because authentication is not configured. Please contact support.';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(() => {
@@ -92,21 +108,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (error) {
-          // Fallback check demo database
-          const found = initialStaffAndDrivers.find(
-            u => u.email.toLowerCase() === identifier.toLowerCase() || u.username === identifier || u.phone === identifier
-          );
-          if (found) {
-            if (found.account_status === 'blocked_fraud') {
-              setLoading(false);
-              return { success: false, message: 'Account Suspended: Suspicious anti-fraud activity detected.' };
-            }
-            setUser(found);
-            setLoading(false);
-            return { success: true };
-          }
+          // A failed credential check is final. Previously this fell through to a
+          // lookup of the built-in staff/admin accounts by email, username or
+          // phone -- with no password check at all -- so anyone who knew an admin
+          // username could sign in as that admin.
           setLoading(false);
-          return { success: false, message: error.message };
+          return { success: false, message: 'Invalid credentials. Please try again.' };
         }
 
         if (data.user) {
@@ -132,35 +139,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(false);
         return { success: true };
       } else {
-        // Local demo auth check
+        // No auth backend configured. Previously ANY identifier with ANY password
+        // (including an empty one) minted a signed-in customer, and the built-in
+        // staff/admin accounts could be assumed with no password whatsoever.
+        if (!DEMO_AUTH_ENABLED) {
+          setLoading(false);
+          return { success: false, message: AUTH_NOT_CONFIGURED };
+        }
+
+        // Dev-only demo mode, and still requires the shared demo password.
+        if (!DEMO_AUTH_PASSWORD || password !== DEMO_AUTH_PASSWORD) {
+          setLoading(false);
+          return { success: false, message: 'Invalid credentials. Please try again.' };
+        }
+
         const staffOrAdmin = initialStaffAndDrivers.find(
           u => u.email.toLowerCase() === identifier.toLowerCase() || u.username === identifier || u.phone === identifier
         );
-        
-        if (staffOrAdmin) {
-          if (staffOrAdmin.account_status === 'blocked_fraud') {
-            setLoading(false);
-            return { success: false, message: 'Account Suspended: Suspicious anti-fraud activity detected.' };
-          }
-          setUser(staffOrAdmin);
+
+        if (!staffOrAdmin) {
           setLoading(false);
-          return { success: true };
+          return { success: false, message: 'Invalid credentials. Please try again.' };
         }
 
-        // Generic user login fallback
-        const demoUser: UserProfile = {
-          id: 'u-' + Date.now(),
-          email: identifier.includes('@') ? identifier : `${identifier}@gmail.com`,
-          full_name: identifier.split('@')[0] || 'Customer',
-          phone: '9876543210',
-          hostel_address: 'Main Campus Hostel, Room 102',
-          role: 'customer',
-          account_status: 'active',
-          is_whatsapp_verified: false,
-          is_approved: true,
-          is_active: true
-        };
-        setUser(demoUser);
+        if (staffOrAdmin.account_status === 'blocked_fraud') {
+          setLoading(false);
+          return { success: false, message: 'Account Suspended: Suspicious anti-fraud activity detected.' };
+        }
+
+        setUser(staffOrAdmin);
         setLoading(false);
         return { success: true };
       }
@@ -173,6 +180,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signUp = async (data: { full_name: string; phone: string; hostel_address: string; email: string; password: string }) => {
     setLoading(true);
     try {
+      // Re-validate here as well as in the form: signUp is a public API on the
+      // context and must not trust that a caller already checked its input.
+      const validation = validateRegistration({
+        fullName: data.full_name,
+        email: data.email,
+        phone: data.phone,
+        address: data.hostel_address,
+        password: data.password
+      });
+
+      if (!validation.valid) {
+        setLoading(false);
+        return { success: false, message: validation.message };
+      }
+
       if (isSupabaseConfigured) {
         const { data: authData, error } = await supabase.auth.signUp({
           email: data.email,
@@ -213,7 +235,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // Local state fallback
+      // No auth backend configured: there is nowhere to durably create an account,
+      // and silently minting a local one granted an approved customer session that
+      // never went through admin approval.
+      if (!DEMO_AUTH_ENABLED) {
+        setLoading(false);
+        return {
+          success: false,
+          message: 'Registration is unavailable because authentication is not configured. Please contact support.'
+        };
+      }
+
       const newCustomer: UserProfile = {
         id: 'c-' + Date.now(),
         email: data.email,
@@ -221,12 +253,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         phone: data.phone,
         hostel_address: data.hostel_address,
         role: 'customer',
-        is_approved: true,
+        is_approved: false, // Match the Supabase path: new customers await admin approval.
         is_active: true
       };
       setUser(newCustomer);
       setLoading(false);
-      return { success: true, message: 'Account created successfully!' };
+      return { success: true, message: 'Account created! Awaiting admin approval.' };
     } catch (e) {
       setLoading(false);
       return { success: false, message: (e as Error).message };
