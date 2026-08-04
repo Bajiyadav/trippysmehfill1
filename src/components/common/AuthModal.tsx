@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { X, Lock, Mail, User, Phone, MapPin, AlertCircle, ShieldCheck, Key, RefreshCw, CheckCircle, Navigation, ShieldAlert } from 'lucide-react';
 import { UserProfile } from '../../types';
 import { sendEmailVerificationOTP, verifyEmailOTPCode } from '../../lib/emailService';
+import { validateRegistration, validateEmail, validateFullName, validatePhone, validateAddress } from '../../lib/validation';
 import { requestValidatedLocation, KITCHEN_LAT, KITCHEN_LNG, MAX_SERVICE_RADIUS_KM } from '../../lib/geoUtils';
 
 interface AuthModalProps {
@@ -124,32 +125,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const cleanName = fullName.trim();
     const cleanAddress = hostelAddress.trim();
 
-    // 1. Strict Email Regex Validation
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!emailRegex.test(cleanEmail)) {
-      setErrorMsg('Invalid email format! Please enter a valid email address (e.g. name@gmail.com).');
-      return;
-    }
+    // Full registration validation. These same rules run again on the server,
+    // which is where they are actually enforced -- this pass is for fast feedback.
+    const validation = validateRegistration({
+      fullName: cleanName,
+      email: cleanEmail,
+      phone: cleanPhone,
+      address: cleanAddress,
+      password
+    });
 
-    // 2. Strict 10-Digit Mobile Number Validation
-    const phoneRegex = /^[6-9]\d{9}$/;
-    if (!phoneRegex.test(cleanPhone)) {
-      setErrorMsg('Invalid mobile number! Please enter a valid 10-digit phone number (e.g. 9876543210).');
-      return;
-    }
-
-    if (cleanName.length < 3) {
-      setErrorMsg('Full name must be at least 3 characters.');
-      return;
-    }
-
-    if (cleanAddress.length < 3) {
-      setErrorMsg('Hostel or delivery address must be at least 3 characters.');
-      return;
-    }
-
-    if (password.length < 6) {
-      setErrorMsg('Password must be at least 6 characters long.');
+    if (!validation.valid) {
+      setErrorMsg(validation.message);
       return;
     }
 
@@ -253,25 +240,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const cleanAddress = googleAddress.trim();
     const cleanEmail = googleEmailInput.trim().toLowerCase();
 
-    if (cleanName.length < 3) {
-      setErrorMsg('Please enter customer full name (min 3 characters).');
-      return;
-    }
+    // Same rules as the standard registration form -- no weaker second path.
+    const googleValidation = [
+      validateFullName(cleanName),
+      validateEmail(cleanEmail),
+      validatePhone(cleanPhone),
+      validateAddress(cleanAddress)
+    ].find(c => !c.valid);
 
-    const phoneRegex = /^[6-9]\d{9}$/;
-    if (!phoneRegex.test(cleanPhone)) {
-      setErrorMsg('Invalid mobile number! Please enter a valid 10-digit phone number (e.g. 9876543210).');
-      return;
-    }
-
-    if (cleanAddress.length < 3) {
-      setErrorMsg('Please enter customer hostel/delivery address.');
-      return;
-    }
-
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!emailRegex.test(cleanEmail)) {
-      setErrorMsg('Please enter a valid Google email address (e.g. user@gmail.com).');
+    if (googleValidation) {
+      setErrorMsg(googleValidation.message);
       return;
     }
 
