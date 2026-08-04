@@ -1,112 +1,94 @@
-import { supabase, isSupabaseConfigured } from './supabase';
-
 export interface SendOtpResult {
   success: boolean;
   message: string;
-  otpCode?: string;
-  provider: 'supabase' | 'resend_api' | 'email_dispatch';
 }
 
+export interface VerifyOtpResult {
+  success: boolean;
+  message: string;
+}
+
+const GENERIC_SEND_FAILURE =
+  'We could not send the verification code right now. Please check your connection and try again.';
+const GENERIC_VERIFY_FAILURE =
+  'We could not verify the code right now. Please check your connection and try again.';
+
 /**
- * Triggers a secure email verification OTP or verification link to the user's provided email.
+ * Asks the server to generate and email a 6-digit verification code.
+ *
+ * The code itself is generated and stored server-side and is deliberately never
+ * returned here -- the browser must not be able to see the value it is meant to
+ * be proving knowledge of.
  */
 export async function sendEmailVerificationOTP(
   email: string,
   fullName: string
 ): Promise<SendOtpResult> {
   const cleanEmail = email.trim().toLowerCase();
-  
-  // Generate a 6-digit OTP code
-  const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
-  // 1. Send via Resend API backend endpoint
   try {
     const response = await fetch('/api/send-verification-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: cleanEmail,
-        fullName,
-        otp: generatedOtp
-      })
+      body: JSON.stringify({ email: cleanEmail, fullName })
     });
 
-    if (response.ok) {
-      const data = await response.json();
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.success) {
       return {
-        success: true,
-        message: data.message || `Real-time OTP security code sent to ${cleanEmail}. Check your inbox!`,
-        otpCode: generatedOtp,
-        provider: 'resend_api'
+        success: false,
+        message: data?.error || GENERIC_SEND_FAILURE
       };
     }
-  } catch {
-    // Fallback if network issue or standalone mode
+
+    return {
+      success: true,
+      message: data.message || `Verification code sent to ${cleanEmail}. Check your inbox.`
+    };
+  } catch (err) {
+    console.error('Failed to request verification OTP:', err);
+    return { success: false, message: GENERIC_SEND_FAILURE };
   }
-
-  // 2. Try Supabase Auth OTP / verification email if configured
-  if (isSupabaseConfigured) {
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: cleanEmail,
-        options: {
-          shouldCreateUser: false,
-          data: { full_name: fullName }
-        }
-      });
-
-      if (!error) {
-        return {
-          success: true,
-          message: `Official Supabase Auth verification email sent to ${cleanEmail}. Check your inbox or spam folder.`,
-          otpCode: generatedOtp,
-          provider: 'supabase'
-        };
-      }
-    } catch (e) {
-      console.warn('Supabase Auth OTP trigger error:', e);
-    }
-  }
-
-  // 3. Fallback Mail Dispatcher
-  return {
-    success: true,
-    message: `Security OTP code generated and dispatched to ${cleanEmail}.`,
-    otpCode: generatedOtp,
-    provider: 'email_dispatch'
-  };
 }
 
 /**
- * Verifies the user's entered OTP code against Supabase Auth or session OTP.
+ * Submits the user's entered code to the server, which is the only party that
+ * knows the expected value.
  */
 export async function verifyEmailOTPCode(
   email: string,
-  enteredOtp: string,
-  expectedOtp: string
-): Promise<{ success: boolean; message: string }> {
+  enteredOtp: string
+): Promise<VerifyOtpResult> {
   const cleanEmail = email.trim().toLowerCase();
   const cleanEntered = enteredOtp.trim();
 
-  if (isSupabaseConfigured) {
-    try {
-      const { error } = await supabase.auth.verifyOtp({
-        email: cleanEmail,
-        token: cleanEntered,
-        type: 'email'
-      });
+  if (!cleanEntered) {
+    return { success: false, message: 'Please enter the 6-digit code sent to your email.' };
+  }
 
-      if (!error) {
-        return { success: true, message: 'Email address verified successfully via Supabase Auth!' };
-      }
-    } catch {
-      // Fallback to local session validation
+  try {
+    const response = await fetch('/api/verify-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: cleanEmail, otp: cleanEntered })
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.success) {
+      return {
+        success: false,
+        message: data?.error || 'Invalid 6-digit OTP code. Please check the code sent to your email.'
+      };
     }
-  }
 
-  if (cleanEntered === expectedOtp.trim()) {
-    return { success: true, message: 'Email address verified successfully!' };
+    return {
+      success: true,
+      message: data.message || 'Email address verified successfully!'
+    };
+  } catch (err) {
+    console.error('Failed to verify OTP:', err);
+    return { success: false, message: GENERIC_VERIFY_FAILURE };
   }
-
-  return { success: false, message: 'Invalid 6-digit OTP code. Please check the code sent to your email.' };
 }
