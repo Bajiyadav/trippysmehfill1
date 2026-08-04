@@ -48,8 +48,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [ipAddress, setIpAddress] = useState<string>('103.211.14.82');
   const [locationCity, setLocationCity] = useState<string>('Sohna GLS Homes near GDGU, Haryana');
 
-  // Email OTP state
-  const [generatedOtp, setGeneratedOtp] = useState<string>('');
+  // Email OTP state. The code itself lives on the server -- the browser only
+  // ever holds what the user typed in.
   const [enteredOtp, setEnteredOtp] = useState<string>('');
   const [resendTimer, setResendTimer] = useState<number>(60);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
@@ -159,19 +159,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     // Send verification OTP to email
     const result = await sendEmailVerificationOTP(cleanEmail, cleanName);
-    if (result.otpCode) {
-      setGeneratedOtp(result.otpCode);
+    if (!result.success) {
+      setErrorMsg(result.message);
+      return;
     }
     setResendTimer(60);
     setRegStep('otp_verify');
-    setInfoMsg(`Security 6-digit OTP dispatched to ${cleanEmail}. Check your inbox.`);
+    setInfoMsg(result.message);
   };
 
   const handleResendOtp = async () => {
     setErrorMsg('');
     const result = await sendEmailVerificationOTP(email.trim().toLowerCase(), fullName.trim());
-    if (result.otpCode) {
-      setGeneratedOtp(result.otpCode);
+    if (!result.success) {
+      setErrorMsg(result.message);
+      return;
     }
     setResendTimer(60);
     setInfoMsg(`New security OTP code sent to ${email}!`);
@@ -181,7 +183,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     e.preventDefault();
     setErrorMsg('');
 
-    const verification = await verifyEmailOTPCode(email, enteredOtp, generatedOtp);
+    const verification = await verifyEmailOTPCode(email, enteredOtp);
     if (!verification.success) {
       setErrorMsg(verification.message);
       return;
@@ -276,8 +278,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     await captureSecurityDetails();
 
     const result = await sendEmailVerificationOTP(cleanEmail, cleanName || 'Google Customer');
-    if (result.otpCode) {
-      setGeneratedOtp(result.otpCode);
+    if (!result.success) {
+      setErrorMsg(result.message);
+      return;
     }
     setIsGoogleOtpSent(true);
     setResendTimer(60);
@@ -289,7 +292,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMsg('');
 
     const cleanEmail = googleEmailInput.trim().toLowerCase();
-    const verification = await verifyEmailOTPCode(cleanEmail, enteredOtp, generatedOtp);
+    const verification = await verifyEmailOTPCode(cleanEmail, enteredOtp);
     if (!verification.success) {
       setErrorMsg(verification.message);
       return;
