@@ -60,7 +60,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          setSelectedLocation(`GPS (${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}) - Hyderabad Campus`);
+          setSelectedLocation(`GPS (${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}) - Sohna GLS Homes, GDGU Haryana`);
           setIsLocating(false);
         },
         () => {

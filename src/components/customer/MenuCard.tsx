@@ -52,46 +52,50 @@ export const MenuCard: React.FC<MenuCardProps> = ({ item, onRequireAuth }) => {
       </div>
 
       {/* Footer Price & Actions */}
-      <div className="flex items-center justify-between pt-2 border-t border-white/10 mt-2">
-        <div>
-          <span className="text-lg font-black text-white">₹{item.price}</span>
-        </div>
-
+      <div className="pt-2 border-t border-white/10 mt-2">
         {!user ? (
           <button
             onClick={onRequireAuth}
-            className="text-xs font-semibold text-[#C5A059] hover:underline"
+            className="w-full py-2 bg-[#C5A059]/10 hover:bg-[#C5A059] text-[#C5A059] hover:text-black font-extrabold rounded-xl text-xs border border-[#C5A059]/40 transition text-center shadow-sm flex items-center justify-center gap-1.5"
           >
-            Sign in to view price
+            <span>Login to View Price & Order</span>
           </button>
-        ) : !item.is_available ? (
-          <span className="text-xs text-gray-500 font-medium">Unavailable</span>
-        ) : cartItem ? (
-          <div className="flex items-center gap-2 bg-[#181818] border border-white/10 rounded-xl px-2 py-1">
-            <button
-              onClick={() => updateQuantity(item.id, -1)}
-              className="w-6 h-6 rounded-lg bg-[#262626] text-white hover:bg-white/20 flex items-center justify-center font-bold text-xs shadow-sm"
-            >
-              <Minus className="w-3 h-3" />
-            </button>
-            <span className="text-xs font-extrabold text-[#C5A059] px-1">
-              {cartItem.quantity}
-            </span>
-            <button
-              onClick={() => updateQuantity(item.id, 1)}
-              className="w-6 h-6 rounded-lg bg-[#C5A059] text-black hover:bg-[#b38f48] flex items-center justify-center font-bold text-xs shadow-sm"
-            >
-              <Plus className="w-3 h-3" />
-            </button>
-          </div>
         ) : (
-          <button
-            onClick={() => addToCart(item)}
-            className="bg-[#C5A059] hover:bg-[#b38f48] active:scale-95 text-black font-extrabold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>ADD</span>
-          </button>
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-lg font-black text-white">₹{item.price}</span>
+            </div>
+
+            {!item.is_available ? (
+              <span className="text-xs text-gray-500 font-medium">Unavailable</span>
+            ) : cartItem ? (
+              <div className="flex items-center gap-2 bg-[#181818] border border-white/10 rounded-xl px-2 py-1">
+                <button
+                  onClick={() => updateQuantity(item.id, -1)}
+                  className="w-6 h-6 rounded-lg bg-[#262626] text-white hover:bg-white/20 flex items-center justify-center font-bold text-xs shadow-sm"
+                >
+                  <Minus className="w-3 h-3" />
+                </button>
+                <span className="text-xs font-extrabold text-[#C5A059] px-1">
+                  {cartItem.quantity}
+                </span>
+                <button
+                  onClick={() => updateQuantity(item.id, 1)}
+                  className="w-6 h-6 rounded-lg bg-[#C5A059] text-black hover:bg-[#b38f48] flex items-center justify-center font-bold text-xs shadow-sm"
+                >
+                  <Plus className="w-3 h-3" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => addToCart(item)}
+                className="bg-[#C5A059] hover:bg-[#b38f48] active:scale-95 text-black font-extrabold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>ADD</span>
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

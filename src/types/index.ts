@@ -14,6 +14,7 @@ export interface UserProfile {
   username?: string;
   avatar_url?: string;
   created_at?: string;
+  password?: string;
   auth_provider?: 'Email' | 'Google' | 'Phone';
   ip_address?: string;
   latitude?: number;

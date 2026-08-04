@@ -1,6 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GalleryItem } from '../../types';
-import { ChevronLeft, ChevronRight, X, Maximize2, Sparkles, Play, Pause, Image as ImageIcon } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  X,
+  Maximize2,
+  Sparkles,
+  Play,
+  Pause,
+  Image as ImageIcon,
+  Share2,
+  ZoomIn,
+  ZoomOut,
+  Check,
+  Flame
+} from 'lucide-react';
 
 interface GallerySectionProps {
   galleryItems: GalleryItem[];
@@ -9,6 +23,31 @@ interface GallerySectionProps {
 export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) => {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [copiedLink, setCopiedLink] = useState<boolean>(false);
+
+  // Touch Swipe coordinates
+  const touchStartX = useRef<number | null>(null);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (selectedIndex === null) return;
+      if (e.key === 'ArrowLeft') {
+        setSelectedIndex((prev) => (prev !== null ? (prev - 1 + galleryItems.length) % galleryItems.length : 0));
+        setZoomLevel(1);
+      } else if (e.key === 'ArrowRight') {
+        setSelectedIndex((prev) => (prev !== null ? (prev + 1) % galleryItems.length : 0));
+        setZoomLevel(1);
+      } else if (e.key === 'Escape') {
+        setSelectedIndex(null);
+        setZoomLevel(1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedIndex, galleryItems.length]);
 
   // Auto slideshow timer when popup is open and playing
   useEffect(() => {
@@ -16,6 +55,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
     if (selectedIndex !== null && isPlaying && galleryItems.length > 1) {
       timer = setInterval(() => {
         setSelectedIndex((prev) => (prev !== null ? (prev + 1) % galleryItems.length : 0));
+        setZoomLevel(1);
       }, 3500);
     }
     return () => {
@@ -29,6 +69,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
     e?.stopPropagation();
     if (selectedIndex !== null) {
       setSelectedIndex((selectedIndex - 1 + galleryItems.length) % galleryItems.length);
+      setZoomLevel(1);
     }
   };
 
@@ -36,6 +77,40 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
     e?.stopPropagation();
     if (selectedIndex !== null) {
       setSelectedIndex((selectedIndex + 1) % galleryItems.length);
+      setZoomLevel(1);
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null || selectedIndex === null) return;
+    const diff = touchStartX.current - e.changedTouches[0].clientX;
+    if (diff > 50) {
+      // Swiped Left -> Next
+      handleNext();
+    } else if (diff < -50) {
+      // Swiped Right -> Prev
+      handlePrev();
+    }
+    touchStartX.current = null;
+  };
+
+  const handleShare = (item: GalleryItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const shareUrl = window.location.href;
+    if (navigator.share) {
+      navigator.share({
+        title: item.title,
+        text: item.caption || `Check out ${item.title} on Trippy's Mehfill!`,
+        url: shareUrl
+      }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(shareUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
     }
   };
 
@@ -53,16 +128,19 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
               <span>Visual Food Showcase</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-black font-serif tracking-tight text-white">
-              Gallery
+              Gallery & Ambiance
             </h2>
             <p className="text-xs sm:text-sm text-gray-400 max-w-xl">
-              Click any image to view a full-screen with zoom and navigation.
+              High-resolution food photography, kitchen ambiance, and chef specials. Click any photo for interactive lightbox zoom.
             </p>
           </div>
 
           <div>
             <button
-              onClick={() => setSelectedIndex(0)}
+              onClick={() => {
+                setSelectedIndex(0);
+                setZoomLevel(1);
+              }}
               className="px-5 py-2.5 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold text-xs rounded-2xl shadow-lg shadow-[#C5A059]/20 transition flex items-center gap-2"
             >
               <Maximize2 className="w-4 h-4" />
@@ -76,9 +154,20 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
           {galleryItems.map((item, idx) => (
             <div
               key={item.id}
-              onClick={() => setSelectedIndex(idx)}
+              onClick={() => {
+                setSelectedIndex(idx);
+                setZoomLevel(1);
+              }}
               className="group relative cursor-pointer overflow-hidden rounded-2xl bg-[#121212] border border-white/10 hover:border-[#C5A059]/60 transition-all duration-300 shadow-xl hover:-translate-y-1"
             >
+              {/* Today's Special Ribbon */}
+              {(idx % 2 === 0 || item.title.toLowerCase().includes('special')) && (
+                <div className="absolute top-3 left-3 z-10 bg-gradient-to-r from-amber-600 to-orange-500 text-white text-[10px] font-black uppercase px-3 py-1 rounded-full shadow-lg flex items-center gap-1 border border-amber-300/30">
+                  <Flame className="w-3 h-3 fill-current" />
+                  <span>Today's Special</span>
+                </div>
+              )}
+
               <div className="aspect-video overflow-hidden bg-[#181818]">
                 <img
                   src={item.image_url}
@@ -114,23 +203,52 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
       {/* Lightbox Interactive Popup Modal */}
       {selectedItem && (
         <div
-          onClick={() => setSelectedIndex(null)}
+          onClick={() => {
+            setSelectedIndex(null);
+            setZoomLevel(1);
+          }}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-md p-4 transition-all duration-300"
         >
           {/* Top Bar Controls */}
           <div className="absolute top-4 left-4 right-4 flex items-center justify-between text-white z-20">
-            <div className="flex items-center gap-2 bg-black/60 px-3.5 py-1.5 rounded-full border border-white/20 text-xs font-mono font-bold">
+            <div className="flex items-center gap-2 bg-black/70 px-3.5 py-1.5 rounded-full border border-white/20 text-xs font-mono font-bold">
               <ImageIcon className="w-4 h-4 text-[#C5A059]" />
               <span>Image {selectedIndex! + 1} of {galleryItems.length}</span>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* Zoom Buttons */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setZoomLevel(prev => (prev >= 2 ? 1 : prev + 0.5));
+                }}
+                className="p-2 rounded-full bg-black/60 border border-white/20 text-white hover:bg-white/20 transition text-xs font-bold flex items-center gap-1"
+                title="Toggle Zoom"
+              >
+                {zoomLevel > 1 ? <ZoomOut className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
+                <span className="hidden sm:inline font-mono">{zoomLevel}x</span>
+              </button>
+
+              {/* Share Button */}
+              <button
+                onClick={(e) => handleShare(selectedItem, e)}
+                className="p-2 rounded-full bg-black/60 border border-white/20 text-white hover:bg-[#C5A059] hover:text-black transition text-xs font-bold flex items-center gap-1"
+                title="Share Image"
+              >
+                {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
+                <span className="hidden sm:inline">{copiedLink ? 'Copied!' : 'Share'}</span>
+              </button>
+
+              {/* Slideshow Toggle */}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsPlaying(!isPlaying);
                 }}
-                className={`p-2.5 rounded-full border transition flex items-center gap-1.5 text-xs font-bold ${
+                className={`p-2 sm:px-3 sm:py-1.5 rounded-full border transition flex items-center gap-1.5 text-xs font-bold ${
                   isPlaying
                     ? 'bg-[#C5A059] text-black border-[#C5A059]'
                     : 'bg-black/60 text-white border-white/20 hover:bg-white/20'
@@ -138,13 +256,17 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
                 title={isPlaying ? 'Pause Auto Slideshow' : 'Play Auto Slideshow'}
               >
                 {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                <span className="hidden sm:inline">{isPlaying ? 'Slideshow Playing' : 'Slideshow Paused'}</span>
+                <span className="hidden sm:inline">{isPlaying ? 'Slideshow Playing' : 'Paused'}</span>
               </button>
 
+              {/* Close Button */}
               <button
-                onClick={() => setSelectedIndex(null)}
-                className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition"
-                title="Close Lightbox"
+                onClick={() => {
+                  setSelectedIndex(null);
+                  setZoomLevel(1);
+                }}
+                className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition"
+                title="Close Lightbox (Esc)"
               >
                 <X className="w-6 h-6" />
               </button>
@@ -157,7 +279,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
               <button
                 onClick={handlePrev}
                 className="absolute left-4 top-1/2 -translate-y-1/2 p-3.5 rounded-full bg-black/70 border border-white/20 hover:bg-[#C5A059] hover:text-black text-white transition z-20 shadow-2xl"
-                title="Previous Image"
+                title="Previous Image (Left Arrow)"
               >
                 <ChevronLeft className="w-7 h-7" />
               </button>
@@ -165,7 +287,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
               <button
                 onClick={handleNext}
                 className="absolute right-4 top-1/2 -translate-y-1/2 p-3.5 rounded-full bg-black/70 border border-white/20 hover:bg-[#C5A059] hover:text-black text-white transition z-20 shadow-2xl"
-                title="Next Image"
+                title="Next Image (Right Arrow)"
               >
                 <ChevronRight className="w-7 h-7" />
               </button>
@@ -175,17 +297,27 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
           {/* Main Lightbox Content Card */}
           <div
             onClick={(e) => e.stopPropagation()}
-            className="max-w-4xl w-full bg-[#121212] border border-white/15 rounded-3xl overflow-hidden shadow-2xl space-y-0 transform transition-all scale-100 my-auto"
+            className="max-w-4xl w-full bg-[#121212] border border-white/15 rounded-3xl overflow-hidden shadow-2xl space-y-0 transform transition-all scale-100 my-auto relative"
           >
             <div className="relative max-h-[65vh] bg-black flex items-center justify-center overflow-hidden p-2">
               <img
                 src={selectedItem.image_url}
                 alt={selectedItem.title}
-                className="max-h-[65vh] w-auto object-contain mx-auto rounded-xl shadow-2xl"
+                style={{ transform: `scale(${zoomLevel})` }}
+                className="max-h-[65vh] w-auto object-contain mx-auto rounded-xl shadow-2xl transition-transform duration-300 cursor-zoom-in"
+                onClick={() => setZoomLevel(prev => (prev >= 2 ? 1 : prev + 0.5))}
               />
+
+              {/* Today's Special Badge Overlay */}
+              {(selectedIndex! % 2 === 0 || selectedItem.title.toLowerCase().includes('special')) && (
+                <div className="absolute top-4 left-4 z-10 bg-gradient-to-r from-amber-600 to-orange-500 text-white text-xs font-black uppercase px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1 border border-amber-300/30">
+                  <Flame className="w-4 h-4 fill-current" />
+                  <span>Today's Chef Special</span>
+                </div>
+              )}
             </div>
 
-            <div className="p-6 bg-[#121212] border-t border-white/10 space-y-4">
+            <div className="p-5 bg-[#121212] border-t border-white/10 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h3 className="text-xl font-bold font-serif text-white">{selectedItem.title}</h3>
@@ -204,7 +336,10 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ galleryItems }) 
                 {galleryItems.map((thumb, tIdx) => (
                   <button
                     key={thumb.id}
-                    onClick={() => setSelectedIndex(tIdx)}
+                    onClick={() => {
+                      setSelectedIndex(tIdx);
+                      setZoomLevel(1);
+                    }}
                     className={`relative w-16 h-12 shrink-0 rounded-xl overflow-hidden border-2 transition ${
                       tIdx === selectedIndex
                         ? 'border-[#C5A059] scale-105 shadow-md'

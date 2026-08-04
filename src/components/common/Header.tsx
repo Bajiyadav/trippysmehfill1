@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
-import { ShoppingBag, User, LogOut, Shield, Bike, HelpCircle, Sparkles } from 'lucide-react';
+import { ShoppingBag, User, LogOut, Shield, Bike, HelpCircle, Bell } from 'lucide-react';
 import { AuthModal } from './AuthModal';
 import { SupportModal } from './SupportModal';
 import { UserRole } from '../../types';
@@ -13,6 +13,7 @@ interface HeaderProps {
   onOpenOrders: () => void;
   onLogoClick?: () => void;
   onOpenAuth?: (tab?: 'signin' | 'register') => void;
+  onOpenCustomerDashboard?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -21,7 +22,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCart,
   onOpenOrders,
   onLogoClick,
-  onOpenAuth
+  onOpenAuth,
+  onOpenCustomerDashboard
 }) => {
   const { user, signOut, switchDemoRole } = useAuth();
   const { totalCount } = useCart();
@@ -29,6 +31,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [authDefaultTab, setAuthDefaultTab] = useState<'signin' | 'register'>('signin');
   const [isSupportOpen, setIsSupportOpen] = useState(false);
   const [isMenuDropdownOpen, setIsMenuDropdownOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
   const handleLogoClick = () => {
     if (onLogoClick) {
@@ -46,6 +49,13 @@ export const Header: React.FC<HeaderProps> = ({
       setAuthDefaultTab(tab);
       setIsAuthOpen(true);
     }
+  };
+
+  const handleLogout = async () => {
+    setIsMenuDropdownOpen(false);
+    await signOut();
+    setActiveSection('menu');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const scrollToSection = (id: string) => {
@@ -87,29 +97,13 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             </div>
 
-            {/* Navigation Bar Links (Gallery, Offers, Menu, Support) */}
+            {/* Clean Top Navigation Bar (Gallery, Support, My Orders, Profile) */}
             <nav className="hidden md:flex items-center gap-6 text-xs sm:text-sm font-extrabold tracking-wide">
               <button
                 onClick={() => scrollToSection('gallery-section')}
                 className="text-gray-300 hover:text-[#C5A059] transition-colors py-1"
               >
                 Gallery
-              </button>
-
-              <button
-                onClick={() => scrollToSection('offers-section')}
-                className="text-gray-300 hover:text-[#C5A059] transition-colors py-1"
-              >
-                Offers
-              </button>
-
-              <button
-                onClick={() => scrollToSection('menu-section')}
-                className={`transition-colors py-1 ${
-                  activeSection === 'menu' ? 'text-[#C5A059] font-black border-b-2 border-[#C5A059]' : 'text-gray-300 hover:text-[#C5A059]'
-                }`}
-              >
-                Menu
               </button>
 
               <button
@@ -120,6 +114,28 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>Support</span>
               </button>
 
+              {user?.role === 'customer' && (
+                <>
+                  <button
+                    onClick={onOpenOrders}
+                    className="text-gray-300 hover:text-[#C5A059] transition-colors py-1 flex items-center gap-1"
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5 text-[#C5A059]" />
+                    <span>My Orders</span>
+                  </button>
+
+                  {onOpenCustomerDashboard && (
+                    <button
+                      onClick={onOpenCustomerDashboard}
+                      className="text-gray-300 hover:text-[#C5A059] transition-colors py-1 flex items-center gap-1"
+                    >
+                      <User className="w-3.5 h-3.5 text-[#C5A059]" />
+                      <span>Profile</span>
+                    </button>
+                  )}
+                </>
+              )}
+
               {user?.role === 'admin' && (
                 <button
                   onClick={() => setActiveSection('admin')}
@@ -128,52 +144,72 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 >
                   <Shield className="w-3.5 h-3.5" />
-                  <span>Admin ERP</span>
+                  <span>Admin Dashboard</span>
                 </button>
               )}
             </nav>
 
-            {/* Right Side Action Buttons */}
+            {/* Right Side Action Controls */}
             <div className="flex items-center gap-2 sm:gap-3">
-              
-              {/* Demo Role Selector Pill */}
-              <div className="hidden xl:flex items-center bg-[#181818] p-1 rounded-full border border-white/10 text-xs">
-                <span className="px-2 text-[#C5A059] font-bold text-[10px] uppercase tracking-wider">Role:</span>
-                {(['customer', 'admin', 'staff', 'driver'] as UserRole[]).map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => {
-                      switchDemoRole(r);
-                      if (r === 'admin') setActiveSection('admin');
-                      else if (r === 'driver') setActiveSection('driver');
-                      else setActiveSection('menu');
-                    }}
-                    className={`px-2.5 py-0.5 rounded-full font-bold capitalize transition text-[11px] ${
-                      user?.role === r
-                        ? 'bg-[#C5A059] text-black font-black shadow-sm'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
 
               {/* Shopping Cart Button */}
-              <button
-                onClick={onOpenCart}
-                className="relative p-2.5 bg-[#181818] hover:bg-white/10 text-white rounded-xl border border-[#C5A059]/30 transition flex items-center gap-1.5 shadow-md"
-              >
-                <ShoppingBag className="w-4 h-4 text-[#C5A059]" />
-                <span className="hidden sm:inline text-xs font-bold">Cart</span>
-                {totalCount > 0 && (
-                  <span className="bg-[#C5A059] text-black text-[10px] font-black px-1.5 py-0.2 rounded-full">
-                    {totalCount}
-                  </span>
-                )}
-              </button>
+              {user?.role === 'customer' && (
+                <button
+                  onClick={onOpenCart}
+                  className="relative p-2.5 bg-[#181818] hover:bg-white/10 text-white rounded-xl border border-[#C5A059]/30 transition flex items-center gap-1.5 shadow-md"
+                >
+                  <ShoppingBag className="w-4 h-4 text-[#C5A059]" />
+                  <span className="hidden sm:inline text-xs font-bold">Cart</span>
+                  {totalCount > 0 && (
+                    <span className="bg-[#C5A059] text-black text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                      {totalCount}
+                    </span>
+                  )}
+                </button>
+              )}
 
-              {/* Login & Sign Up Buttons (when unauthenticated) */}
+              {/* Admin Live Notifications Bell Icon */}
+              {user?.role === 'admin' && (
+                <div className="relative">
+                  <button
+                    onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+                    className="p-2.5 bg-[#181818] hover:bg-white/10 text-[#C5A059] rounded-xl border border-[#C5A059]/30 transition relative"
+                    title="Live ERP Notifications"
+                  >
+                    <Bell className="w-4 h-4" />
+                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                  </button>
+
+                  {/* Notification Dropdown Panel */}
+                  {isNotificationsOpen && (
+                    <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-[#121212] text-gray-200 rounded-2xl shadow-2xl border border-white/15 p-4 z-50 space-y-3">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                        <span className="font-extrabold text-white text-xs font-serif">Notification Center</span>
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-bold px-2 py-0.5 rounded-full">Live</span>
+                      </div>
+
+                      <div className="space-y-2 text-xs">
+                        <div className="p-2.5 bg-[#181818] rounded-xl border border-white/5 space-y-1">
+                          <p className="font-bold text-white">📦 New Order #ORD-8921</p>
+                          <p className="text-[11px] text-gray-400">Chicken Dum Biryani (x2) • Hostel 4</p>
+                        </div>
+
+                        <div className="p-2.5 bg-[#181818] rounded-xl border border-white/5 space-y-1">
+                          <p className="font-bold text-amber-400">🛵 Driver Assigned</p>
+                          <p className="text-[11px] text-gray-400">Ramesh Kumar assigned to Order #ORD-8920</p>
+                        </div>
+
+                        <div className="p-2.5 bg-[#181818] rounded-xl border border-white/5 space-y-1">
+                          <p className="font-bold text-blue-400">👤 Customer Registered</p>
+                          <p className="text-[11px] text-gray-400 font-mono">GPS Lat: 17.385, Lng: 78.486</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* User Account Controls */}
               {user ? (
                 <div className="relative">
                   <button
@@ -193,15 +229,27 @@ export const Header: React.FC<HeaderProps> = ({
                     <div className="absolute right-0 mt-2 w-52 bg-[#121212] text-gray-200 rounded-2xl shadow-2xl border border-white/15 py-2 z-50 text-xs space-y-1">
                       <div className="px-4 py-2 border-b border-white/10">
                         <p className="font-bold text-white truncate">{user.full_name}</p>
-                        <p className="text-[10px] text-gray-400 truncate">{user.email}</p>
+                        <p className="text-[10px] text-gray-400 truncate">{user.email || user.phone}</p>
                       </div>
+
+                      {user.role === 'customer' && onOpenCustomerDashboard && (
+                        <button
+                          onClick={() => {
+                            onOpenCustomerDashboard();
+                            setIsMenuDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-white/5 text-[#C5A059] font-bold flex items-center gap-2"
+                        >
+                          <User className="w-4 h-4" /> My Profile & Dashboard
+                        </button>
+                      )}
 
                       {user.role === 'admin' && (
                         <button
                           onClick={() => { setActiveSection('admin'); setIsMenuDropdownOpen(false); }}
                           className="w-full text-left px-4 py-2 hover:bg-white/5 text-[#C5A059] font-bold flex items-center gap-2"
                         >
-                          <Shield className="w-4 h-4" /> Admin ERP
+                          <Shield className="w-4 h-4" /> Admin Dashboard
                         </button>
                       )}
 
@@ -215,7 +263,10 @@ export const Header: React.FC<HeaderProps> = ({
                       )}
 
                       <button
-                        onClick={onOpenOrders}
+                        onClick={() => {
+                          onOpenOrders();
+                          setIsMenuDropdownOpen(false);
+                        }}
                         className="w-full text-left px-4 py-2 hover:bg-white/5 text-gray-300 font-bold flex items-center gap-2"
                       >
                         <ShoppingBag className="w-4 h-4" /> Order History
@@ -229,10 +280,10 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
 
                       <button
-                        onClick={() => { signOut(); setIsMenuDropdownOpen(false); }}
+                        onClick={handleLogout}
                         className="w-full text-left px-4 py-2 hover:bg-rose-500/10 text-rose-400 font-bold flex items-center gap-2 border-t border-white/10 pt-2"
                       >
-                        <LogOut className="w-4 h-4" /> Sign out
+                        <LogOut className="w-4 h-4" /> Logout Account
                       </button>
                     </div>
                   )}

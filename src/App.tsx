@@ -10,6 +10,7 @@ import { MenuCard } from './components/customer/MenuCard';
 import { CartDrawer } from './components/customer/CartDrawer';
 import { OrderTrackerModal } from './components/customer/OrderTrackerModal';
 import { CustomerFeedbackModal } from './components/customer/CustomerFeedbackModal';
+import { CustomerDashboardModal } from './components/customer/CustomerDashboardModal';
 import { AuthModal } from './components/common/AuthModal';
 import { WhatsAppVerificationGate } from './components/common/WhatsAppVerificationGate';
 
@@ -113,6 +114,7 @@ function MainApp() {
   // Modals
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isCustomerDashboardOpen, setIsCustomerDashboardOpen] = useState(false);
   const [authModalTab, setAuthModalTab] = useState<'signin' | 'register'>('signin');
   const [activeTrackingOrder, setActiveTrackingOrder] = useState<Order | null>(null);
   const [feedbackOrder, setFeedbackOrder] = useState<Order | null>(null);
@@ -157,10 +159,20 @@ function MainApp() {
     loadSupabaseData();
   }, []);
 
-  // Auto prompt Sign In modal for unauthenticated visitors on initial load
+  // Ensure default landing page is ALWAYS 'menu' (Home Page) on mount
+  useEffect(() => {
+    setActiveSection('menu');
+  }, []);
+
+  // Guarantee that unauthenticated users are always kept on 'menu' (Home Page)
   useEffect(() => {
     if (!user) {
-      setIsAuthModalOpen(true);
+      if (activeSection !== 'menu') {
+        setActiveSection('menu');
+      }
+    } else if (user.role === 'admin' && activeSection === 'menu') {
+      // If admin logs in, switch to admin dashboard
+      setActiveSection('admin');
     }
   }, [user]);
 
@@ -239,8 +251,8 @@ function MainApp() {
       dish.category.toLowerCase() === selectedCategory.toLowerCase();
 
     const matchesSearch =
-      dish.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      dish.description.toLowerCase().includes(searchQuery.toLowerCase());
+      (dish.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (dish.description || '').toLowerCase().includes(searchQuery.toLowerCase());
 
     return matchesCategory && matchesSearch;
   });
@@ -259,11 +271,8 @@ function MainApp() {
         activeSection={activeSection}
         setActiveSection={setActiveSection}
         onOpenCart={() => setIsCartOpen(true)}
-        onOpenOrders={() => {
-          const userOrder = orders.find(o => o.customer_id === user?.id || o.customer_phone === user?.phone);
-          if (userOrder) setActiveTrackingOrder(userOrder);
-          else alert("No recent orders found.");
-        }}
+        onOpenOrders={() => setIsCustomerDashboardOpen(true)}
+        onOpenCustomerDashboard={() => setIsCustomerDashboardOpen(true)}
         onLogoClick={handleLogoClick}
         onOpenAuth={(tab = 'signin') => {
           setAuthModalTab(tab);
@@ -504,6 +513,20 @@ function MainApp() {
         onSubmitSuccess={(fb) => setFeedback(prev => [fb, ...prev])}
       />
 
+      <CustomerDashboardModal
+        isOpen={isCustomerDashboardOpen}
+        onClose={() => setIsCustomerDashboardOpen(false)}
+        orders={orders}
+        menuItems={menuItems}
+        onTrackOrder={(ord) => {
+          setIsCustomerDashboardOpen(false);
+          setActiveTrackingOrder(ord);
+        }}
+        onOpenSupport={() => {
+          setIsCustomerDashboardOpen(false);
+        }}
+      />
+
       <AuthModal
         isOpen={isAuthModalOpen}
         defaultTab={authModalTab}
@@ -564,14 +587,14 @@ function MainApp() {
             <div className="space-y-1.5 text-xs text-gray-300 font-mono">
               <p>📞 +91 98765 43210</p>
               <p>✉️ support@trippysmehfill.com</p>
-              <p className="text-gray-500 text-[11px] font-sans">📍 Goenka University Campus - Gate 5, Sector 4, Food Hub, Hyderabad</p>
+              <p className="text-gray-500 text-[11px] font-sans">📍 Sohna GLS Homes, Near GD Goenka University (GDGU), Sohna, Haryana</p>
             </div>
           </div>
         </div>
 
         <div className="max-w-7xl mx-auto pt-8 mt-8 border-t border-white/10 text-center text-[11px] text-gray-500 flex flex-col sm:flex-row justify-between items-center gap-2">
           <p>© 2026 Trippy's Mehfill. All rights reserved.</p>
-          <p className="text-[#C5A059]">Hyderabad Cloud Kitchen & Food Delivery Service</p>
+          <p className="text-[#C5A059]">Sohna GLS Homes (Near GDGU, Haryana) Cloud Kitchen & Food Delivery Service</p>
         </div>
       </footer>
 

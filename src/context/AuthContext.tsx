@@ -284,10 +284,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
-    if (isSupabaseConfigured) {
-      await supabase.auth.signOut();
+    try {
+      if (isSupabaseConfigured) {
+        await supabase.auth.signOut();
+      }
+    } catch (e) {
+      console.error("Signout error", e);
     }
     setUser(null);
+    localStorage.removeItem('trippys_user');
+    localStorage.removeItem('trippy_erp_user');
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('supabase') || key.includes('auth') || key.includes('user') || key.includes('sb-'))) {
+          localStorage.removeItem(key);
+        }
+      }
+      sessionStorage.clear();
+    } catch {
+      // ignore
+    }
   };
 
   const updateProfile = async (data: Partial<UserProfile>) => {

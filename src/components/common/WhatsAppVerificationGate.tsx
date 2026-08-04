@@ -46,7 +46,7 @@ export const WhatsAppVerificationGate: React.FC<WhatsAppVerificationGateProps> =
             Verify Your Mobile Number
           </h2>
           <p className="text-xs text-gray-400 max-w-sm mx-auto leading-relaxed">
-            To safeguard our Hyderabad Cloud Kitchen against fraudulent orders, customer mobile verification via WhatsApp is required.
+            To safeguard our Sohna GLS Homes, GDGU Haryana Cloud Kitchen against fraudulent orders, customer mobile verification via WhatsApp is required.
           </p>
         </div>
 

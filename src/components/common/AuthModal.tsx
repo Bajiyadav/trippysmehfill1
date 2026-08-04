@@ -46,7 +46,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [longitude, setLongitude] = useState<number | null>(null);
   const [distanceFromKitchen, setDistanceFromKitchen] = useState<number>(0);
   const [ipAddress, setIpAddress] = useState<string>('103.211.14.82');
-  const [locationCity, setLocationCity] = useState<string>('Hyderabad Cloud Kitchen');
+  const [locationCity, setLocationCity] = useState<string>('Sohna GLS Homes near GDGU, Haryana');
 
   // Email OTP state
   const [generatedOtp, setGeneratedOtp] = useState<string>('');
@@ -74,7 +74,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Real-Time Hardware Geolocation & 15km Geo-Fence Enforcement
+  // Real-Time Hardware Geolocation (Radius restriction removed - open service)
   const captureSecurityDetails = async (): Promise<{ lat: number; lng: number; ip: string; isOK: boolean }> => {
     setIsLocating(true);
     setGeoDenied(false);
@@ -85,18 +85,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLatitude(geoResult.latitude);
     setLongitude(geoResult.longitude);
     setDistanceFromKitchen(geoResult.distanceKm);
-
-    if (geoResult.errorType === 'DENIED') {
-      setGeoDenied(true);
-      setIsLocating(false);
-      return { lat: 0, lng: 0, ip: geoResult.ipAddress, isOK: false };
-    }
-
-    if (!geoResult.isWithinZone) {
-      setErrorMsg(`Delivery Unauthorized: You are outside our ${MAX_SERVICE_RADIUS_KM}km operational service zone (${geoResult.distanceKm} km from kitchen).`);
-      setIsLocating(false);
-      return { lat: geoResult.latitude, lng: geoResult.longitude, ip: geoResult.ipAddress, isOK: false };
-    }
 
     setIsLocating(false);
     return { lat: geoResult.latitude, lng: geoResult.longitude, ip: geoResult.ipAddress, isOK: true };

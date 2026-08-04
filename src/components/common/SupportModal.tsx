@@ -70,7 +70,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) =
 
           <div className="flex items-start gap-2 text-gray-300">
             <MapPin className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
-            <span>Campus Gate 5, Goenka University, Sector 4, Food Hub, Hyderabad</span>
+            <span>Sohna GLS Homes, Near GD Goenka University (GDGU), Sohna, Haryana</span>
           </div>
         </div>
 

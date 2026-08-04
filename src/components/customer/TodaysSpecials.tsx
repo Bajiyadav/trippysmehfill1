@@ -59,35 +59,37 @@ export const TodaysSpecials: React.FC<TodaysSpecialsProps> = ({ specials, onRequ
                 </div>
               </div>
 
-              <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/10">
-                <div className="text-base font-black text-white">
-                  ₹{item.price}
-                </div>
-
+              <div className="mt-4 pt-3 border-t border-white/10">
                 {!user ? (
                   <button
                     onClick={onRequireAuth}
-                    className="text-xs font-semibold text-[#C5A059] hover:text-[#d4af65] bg-[#C5A059]/10 px-3 py-1.5 rounded-xl transition border border-[#C5A059]/30"
+                    className="w-full py-2 bg-[#C5A059]/10 hover:bg-[#C5A059] text-[#C5A059] hover:text-black font-extrabold rounded-xl text-xs border border-[#C5A059]/40 transition text-center shadow-sm flex items-center justify-center gap-1.5"
                   >
-                    Sign in to view offer price
+                    <span>Login to View Special Price</span>
                   </button>
                 ) : (
-                  <button
-                    onClick={() => addToCart(item)}
-                    className="bg-[#C5A059] hover:bg-[#b38f48] active:scale-95 text-black font-extrabold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md transition-all"
-                  >
-                    {cartItem ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>In Cart ({cartItem.quantity})</span>
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Add</span>
-                      </>
-                    )}
-                  </button>
+                  <div className="flex items-center justify-between">
+                    <div className="text-base font-black text-white">
+                      ₹{item.price}
+                    </div>
+
+                    <button
+                      onClick={() => addToCart(item)}
+                      className="bg-[#C5A059] hover:bg-[#b38f48] active:scale-95 text-black font-extrabold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md transition-all"
+                    >
+                      {cartItem ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>In Cart ({cartItem.quantity})</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

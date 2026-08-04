@@ -1,11 +1,11 @@
 // ====================================================================
 // GEOLOCATION & ANTI-FRAUD UTILITIES
-// Hardcoded Restaurant Kitchen Coordinates: Hyderabad Cloud Kitchen
+// Cloud Kitchen Coordinates: Sohna GLS Homes near GDGU, Haryana
 // ====================================================================
 
-export const KITCHEN_LAT = 17.3850;
-export const KITCHEN_LNG = 78.4867;
-export const MAX_SERVICE_RADIUS_KM = 15.0;
+export const KITCHEN_LAT = 28.2468;
+export const KITCHEN_LNG = 77.0628;
+export const MAX_SERVICE_RADIUS_KM = 99999; // Radius restriction disabled
 
 /**
  * Calculates straight-line distance in kilometers between two GPS coordinates
@@ -59,17 +59,17 @@ export interface GeoLocationResult {
 }
 
 /**
- * Requests browser HTML5 Geolocation API and validates 15km geo-fence.
+ * Requests browser HTML5 Geolocation API.
+ * Radius restriction is disabled - all locations are accepted smoothly.
  */
 export async function requestValidatedLocation(): Promise<GeoLocationResult> {
   const ipAddress = await fetchPublicIP();
 
   if (!('geolocation' in navigator)) {
-    // Geolocation API not supported - fallback default campus coords for preview
     return {
       latitude: KITCHEN_LAT,
       longitude: KITCHEN_LNG,
-      distanceKm: 0.8,
+      distanceKm: 0.1,
       isWithinZone: true,
       ipAddress
     };
@@ -79,7 +79,7 @@ export async function requestValidatedLocation(): Promise<GeoLocationResult> {
     const position: GeolocationPosition = await new Promise((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(resolve, reject, {
         enableHighAccuracy: true,
-        timeout: 6000,
+        timeout: 5000,
         maximumAge: 0
       });
     });
@@ -87,19 +87,6 @@ export async function requestValidatedLocation(): Promise<GeoLocationResult> {
     const lat = position.coords.latitude;
     const lng = position.coords.longitude;
     const distanceKm = calculateDistanceKm(lat, lng, KITCHEN_LAT, KITCHEN_LNG);
-    const isWithinZone = distanceKm <= MAX_SERVICE_RADIUS_KM;
-
-    if (!isWithinZone) {
-      return {
-        latitude: lat,
-        longitude: lng,
-        distanceKm,
-        isWithinZone: false,
-        ipAddress,
-        errorType: 'OUT_OF_ZONE',
-        errorMessage: `Delivery Unauthorized: You are ${distanceKm} km away, which exceeds our ${MAX_SERVICE_RADIUS_KM}km operational service zone.`
-      };
-    }
 
     return {
       latitude: lat,
@@ -108,24 +95,12 @@ export async function requestValidatedLocation(): Promise<GeoLocationResult> {
       isWithinZone: true,
       ipAddress
     };
-  } catch (error: any) {
-    if (error?.code === 1) { // PERMISSION_DENIED
-      return {
-        latitude: 0,
-        longitude: 0,
-        distanceKm: 999,
-        isWithinZone: false,
-        ipAddress,
-        errorType: 'DENIED',
-        errorMessage: 'Access Denied: Location verification is mandatory to prevent fraudulent orders.'
-      };
-    }
-
-    // Position unavailable or timeout -> Default to fallback near kitchen
+  } catch {
+    // Fallback gracefully to default kitchen coordinates without blocking user
     return {
       latitude: KITCHEN_LAT,
       longitude: KITCHEN_LNG,
-      distanceKm: 0.5,
+      distanceKm: 0.1,
       isWithinZone: true,
       ipAddress
     };
