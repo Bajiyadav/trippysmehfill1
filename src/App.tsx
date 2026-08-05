@@ -545,9 +545,6 @@ function MainApp() {
         onRegisterSuccess={(newCustomer) => setCustomersList(prev => [newCustomer, ...prev])}
       />
 
-      {/* Mandatory WhatsApp Mobile Verification Gate for Customers */}
-      <WhatsAppVerificationGate />
-
       {/* Footer */}
       <footer className="bg-[#080808] text-gray-400 text-xs py-10 px-4 border-t border-white/10 mt-auto">
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -596,8 +593,8 @@ function MainApp() {
           <div className="space-y-2">
             <p className="text-xs font-black text-white uppercase tracking-wider font-serif">Contact</p>
             <div className="space-y-1.5 text-xs text-gray-300 font-mono">
-              <p>📞 +91 98765 43210</p>
-              <p>✉️ support@trippysmehfill.com</p>
+              <p>📞 +91 85699 55929</p>
+              <p>✉️ trippysmehfill.kitchen@gmail.com</p>
               <p className="text-gray-500 text-[11px] font-sans">📍 Sohna GLS Homes, Near GD Goenka University (GDGU), Sohna, Haryana</p>
             </div>
           </div>

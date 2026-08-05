@@ -135,3 +135,96 @@ export async function verifyEmailOTPCode(
     return { success: false, message: toFriendlyAuthError(err).message };
   }
 }
+
+/**
+ * Sends a password reset OTP code to the user's registered email.
+ */
+export async function sendPasswordResetOTP(email: string): Promise<SendOtpResult> {
+  const cleanEmail = email.trim().toLowerCase();
+
+  const emailCheck = validateEmail(cleanEmail);
+  if (!emailCheck.valid) {
+    return { success: false, message: emailCheck.message };
+  }
+
+  if (!isSupabaseConfigured) {
+    return { success: false, message: NOT_CONFIGURED_MESSAGE };
+  }
+
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+
+    if (error) {
+      return { success: false, message: toFriendlyAuthError(error).message };
+    }
+
+    return {
+      success: true,
+      message: `Password reset OTP code sent to ${cleanEmail}. Check your inbox.`
+    };
+  } catch (err) {
+    return { success: false, message: toFriendlyAuthError(err).message };
+  }
+}
+
+/**
+ * Verifies the password reset OTP code and updates the user's password.
+ */
+export async function resetPasswordWithOTP(
+  email: string,
+  enteredOtp: string,
+  newPassword: string
+): Promise<VerifyOtpResult> {
+  const cleanEmail = email.trim().toLowerCase();
+  const token = enteredOtp.trim();
+
+  if (!token) {
+    return { success: false, message: 'Please enter the verification code sent to your email.' };
+  }
+
+  if (!/^\d{6,8}$/.test(token)) {
+    return { success: false, message: 'Enter the verification code from your email.' };
+  }
+
+  if (!newPassword || newPassword.length < 6) {
+    return { success: false, message: 'Password must be at least 6 characters long.' };
+  }
+
+  if (!isSupabaseConfigured) {
+    return { success: false, message: NOT_CONFIGURED_MESSAGE };
+  }
+
+  try {
+    // 1. Verify recovery OTP to establish session
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token,
+      type: 'recovery'
+    });
+
+    if (verifyError) {
+      // Fallback try type 'email' if recovery token type is set as email
+      const { error: emailVerifyError } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token,
+        type: 'email'
+      });
+      if (emailVerifyError) {
+        return { success: false, message: toFriendlyAuthError(verifyError).message };
+      }
+    }
+
+    // 2. Update user's password
+    const { error: updateError } = await supabase.auth.updateUser({
+      password: newPassword
+    });
+
+    if (updateError) {
+      return { success: false, message: toFriendlyAuthError(updateError).message };
+    }
+
+    return { success: true, message: 'Your password has been updated successfully! You are now signed in.' };
+  } catch (err) {
+    return { success: false, message: toFriendlyAuthError(err).message };
+  }
+}

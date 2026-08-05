@@ -88,9 +88,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       phone: meta.phone || '',
       hostel_address: meta.hostel_address || '',
       role: 'customer',
-      account_status: 'active',
-      is_whatsapp_verified: false,
-      is_approved: false, // New customers await admin approval.
+      is_whatsapp_verified: true,
+      is_approved: true,
       is_active: true,
       auth_provider: 'Email',
       created_at: new Date().toISOString()
@@ -272,8 +271,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         hostel_address: data.hostel_address.trim(),
         role: 'customer',
         account_status: 'active',
-        is_whatsapp_verified: false,
-        is_approved: false, // Admin approval still required before ordering.
+        is_whatsapp_verified: true,
+        is_approved: true,
         is_active: true,
         auth_provider: 'Email',
         created_at: new Date().toISOString()
