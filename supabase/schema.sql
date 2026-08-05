@@ -1,123 +1,176 @@
 -- ====================================================================
--- TRIPPY'S MEHFILL ERP: ANTI-FRAUD & SECURITY DATABASE SCHEMA
+-- TRIPPY'S MEHFILL ERP: COMPLETE PROFILES DATABASE SCHEMA & MIGRATION
 -- ====================================================================
 -- Copy and execute this entire SQL script inside the Supabase SQL Editor.
+-- This script is fully idempotent and safe to run on existing databases.
 
 -- 1. Create Enums for Role & Account Status
 DO $$ BEGIN
-  CREATE TYPE user_role AS ENUM ('admin', 'staff', 'customer');
+  CREATE TYPE user_role AS ENUM ('admin', 'staff', 'driver', 'customer');
 EXCEPTION
   WHEN duplicate_object THEN null;
 END $$;
 
 DO $$ BEGIN
-  CREATE TYPE account_status AS ENUM ('active', 'blocked_fraud', 'pending_verification');
+  CREATE TYPE account_status AS ENUM ('active', 'pending_verification', 'blocked_fraud');
 EXCEPTION
   WHEN duplicate_object THEN null;
 END $$;
 
--- 2. Create public.profiles Table
+-- 2. Create public.profiles Table if not exists
 CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  full_name text NOT NULL,
-  phone text NOT NULL,
   email text UNIQUE NOT NULL,
-  role user_role DEFAULT 'customer'::user_role,
-  account_status account_status DEFAULT 'active'::account_status,
-  registration_ip text,
-  signup_latitude numeric,
-  signup_longitude numeric,
+  full_name text NOT NULL,
+  phone text DEFAULT '',
+  hostel_address text DEFAULT '',
+  role text DEFAULT 'customer',
+  account_status text DEFAULT 'active',
   is_whatsapp_verified boolean DEFAULT false,
-  hostel_address text,
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now())
+  is_approved boolean DEFAULT false,
+  is_active boolean DEFAULT true,
+  auth_provider text DEFAULT 'Email',
+  ip_address text DEFAULT '103.211.14.82',
+  latitude double precision DEFAULT 17.3850,
+  longitude double precision DEFAULT 78.4867,
+  location_city text DEFAULT 'Sohna GLS Homes near GDGU, Haryana',
+  registration_ip text DEFAULT '103.211.14.82',
+  signup_latitude numeric DEFAULT 17.3850,
+  signup_longitude numeric DEFAULT 78.4867,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now())
 );
 
--- 3. Enable Row Level Security (RLS)
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+-- 3. Migration: Add missing columns if public.profiles already existed
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS full_name text DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone text DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS hostel_address text DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role text DEFAULT 'customer';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS account_status text DEFAULT 'active';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_whatsapp_verified boolean DEFAULT false;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_approved boolean DEFAULT false;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS auth_provider text DEFAULT 'Email';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS ip_address text DEFAULT '103.211.14.82';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS latitude double precision DEFAULT 17.3850;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS longitude double precision DEFAULT 78.4867;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS location_city text DEFAULT 'Sohna GLS Homes near GDGU, Haryana';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS registration_ip text DEFAULT '103.211.14.82';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS signup_latitude numeric DEFAULT 17.3850;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS signup_longitude numeric DEFAULT 78.4867;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT timezone('utc'::text, now());
 
--- 4. RLS Policies
--- Users can read their own profile
+-- 5. Helper Function to Check Admin/Staff Privileges (SECURITY DEFINER prevents RLS infinite recursion)
+CREATE OR REPLACE FUNCTION public.is_admin_or_staff()
+RETURNS boolean AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND (role = 'admin' OR role = 'staff')
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 6. RLS Policies (Safe recreate)
+DROP POLICY IF EXISTS "Public profiles read access" ON public.profiles;
+DROP POLICY IF EXISTS "Users can read own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users insert own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Admins full control over profiles" ON public.profiles;
+
+-- Allow users to read their own profile
 CREATE POLICY "Users can read own profile" ON public.profiles
   FOR SELECT USING (auth.uid() = id);
 
--- Users can update their own profile
+-- Allow authenticated users to insert their own profile
+CREATE POLICY "Users insert own profile" ON public.profiles
+  FOR INSERT WITH CHECK (auth.uid() = id);
+
+-- Allow users to update their own profile
 CREATE POLICY "Users can update own profile" ON public.profiles
   FOR UPDATE USING (auth.uid() = id);
 
--- Admins can view and manage all profiles
+-- Admins and staff full control over profiles (Uses SECURITY DEFINER function to prevent infinite loop)
 CREATE POLICY "Admins full control over profiles" ON public.profiles
-  FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'admin'::user_role
-    )
-  );
+  FOR ALL USING (public.is_admin_or_staff());
 
--- 5. Postgres Trigger Function for Automatic Signup Handling
+-- 7. Postgres Trigger Function for Automatic Signup Handling
 CREATE OR REPLACE FUNCTION public.handle_new_user_signup()
 RETURNS trigger AS $$
 DECLARE
   user_phone text;
   user_name text;
   user_ip text;
-  user_lat numeric;
-  user_lng text;
-  assigned_role user_role;
+  user_lat double precision;
+  user_lng double precision;
+  assigned_role text;
 BEGIN
-  -- Extract user_metadata passed during OTP / OAuth signup
-  user_phone := COALESCE(new.raw_user_meta_data->>'phone', '9876543210');
+  user_phone := COALESCE(new.raw_user_meta_data->>'phone', '');
   user_name := COALESCE(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1));
-  user_ip := COALESCE(new.raw_user_meta_data->>'ip', '103.211.14.82');
-  user_lat := NULLIF(new.raw_user_meta_data->>'latitude', '')::numeric;
-  user_lng := NULLIF(new.raw_user_meta_data->>'longitude', '')::numeric;
+  user_ip := COALESCE(new.raw_user_meta_data->>'ip_address', new.raw_user_meta_data->>'ip', '103.211.14.82');
+  user_lat := COALESCE(NULLIF(new.raw_user_meta_data->>'latitude', '')::double precision, 17.3850);
+  user_lng := COALESCE(NULLIF(new.raw_user_meta_data->>'longitude', '')::double precision, 78.4867);
 
-  -- Assign 'admin' role if admin email, else 'customer'
   IF new.email = 'admin@gallery.app' OR new.email = 'nagapavankumarjavisetty@gmail.com' THEN
-    assigned_role := 'admin'::user_role;
+    assigned_role := 'admin';
   ELSE
-    assigned_role := 'customer'::user_role;
+    assigned_role := 'customer';
   END IF;
 
-  -- Insert profile row
   INSERT INTO public.profiles (
     id,
+    email,
     full_name,
     phone,
-    email,
+    hostel_address,
     role,
     account_status,
-    registration_ip,
-    signup_latitude,
-    signup_longitude,
     is_whatsapp_verified,
-    created_at
+    is_approved,
+    is_active,
+    auth_provider,
+    ip_address,
+    latitude,
+    longitude,
+    location_city,
+    created_at,
+    updated_at
   )
   VALUES (
     new.id,
+    new.email,
     user_name,
     user_phone,
-    new.email,
+    COALESCE(new.raw_user_meta_data->>'hostel_address', ''),
     assigned_role,
-    'active'::account_status,
+    'active',
+    false,
+    (assigned_role = 'admin'), -- Admin auto-approved
+    true,
+    'Email',
     user_ip,
-    COALESCE(user_lat, 17.3850),
-    COALESCE(user_lng::numeric, 78.4867),
-    (assigned_role = 'admin'::user_role), -- Admin auto-verified
+    user_lat,
+    user_lng,
+    'Sohna GLS Homes near GDGU, Haryana',
+    now(),
     now()
   )
   ON CONFLICT (id) DO UPDATE SET
     full_name = EXCLUDED.full_name,
     phone = EXCLUDED.phone,
-    registration_ip = EXCLUDED.registration_ip,
-    signup_latitude = EXCLUDED.signup_latitude,
-    signup_longitude = EXCLUDED.signup_longitude;
+    hostel_address = EXCLUDED.hostel_address,
+    updated_at = now();
 
   RETURN new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 6. Attach Trigger to auth.users Table
+-- 8. Attach Trigger to auth.users Table
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user_signup();
+
+

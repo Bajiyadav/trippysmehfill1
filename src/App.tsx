@@ -137,7 +137,7 @@ function MainApp() {
 
     async function loadSupabaseData() {
       try {
-        const { data: menu } = await supabase.from('menu_items').select('*').order('display_order');
+        const { data: menu } = await supabase.from('menu_items').select('*');
         if (menu && menu.length > 0) setMenuItems(menu as MenuItem[]);
 
         const { data: ords } = await supabase.from('orders').select('*').order('created_at', { ascending: false });

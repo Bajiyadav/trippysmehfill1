@@ -28,65 +28,129 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const [showSqlModal, setShowSqlModal] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
-  const sqlSchemaScript = `-- ANTI-FRAUD DATABASE SCHEMA & SCHEMA TRIGGERS
--- Execute this SQL in the Supabase SQL Editor:
+  const sqlSchemaScript = `-- COMPLETE PROFILES DATABASE SCHEMA & MIGRATION SCRIPT
+-- Copy and execute this entire SQL script inside the Supabase SQL Editor.
+-- Safe and idempotent: updates existing public.profiles table if columns are missing.
 
-CREATE TYPE user_role AS ENUM ('admin', 'staff', 'customer');
+DO $$ BEGIN
+  CREATE TYPE user_role AS ENUM ('admin', 'staff', 'driver', 'customer');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE account_status AS ENUM ('active', 'pending_verification', 'blocked_fraud');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT UNIQUE NOT NULL,
   full_name TEXT NOT NULL,
-  phone TEXT,
-  hostel_address TEXT,
-  role user_role DEFAULT 'customer',
-  account_status TEXT DEFAULT 'active', -- 'active', 'pending_verification', 'blocked_fraud'
+  phone TEXT DEFAULT '',
+  hostel_address TEXT DEFAULT '',
+  role TEXT DEFAULT 'customer',
+  account_status TEXT DEFAULT 'active',
   is_whatsapp_verified BOOLEAN DEFAULT FALSE,
-  is_approved BOOLEAN DEFAULT TRUE,
+  is_approved BOOLEAN DEFAULT FALSE,
   is_active BOOLEAN DEFAULT TRUE,
   auth_provider TEXT DEFAULT 'Email',
   ip_address TEXT DEFAULT '103.211.14.82',
   latitude DOUBLE PRECISION DEFAULT 17.3850,
   longitude DOUBLE PRECISION DEFAULT 78.4867,
-  location_city TEXT DEFAULT 'Hyderabad Cloud Kitchen',
+  location_city TEXT DEFAULT 'Sohna GLS Homes near GDGU, Haryana',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Migration: Add missing columns if profiles table already existed
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS full_name TEXT DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS hostel_address TEXT DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'customer';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS account_status TEXT DEFAULT 'active';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_whatsapp_verified BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'Email';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS ip_address TEXT DEFAULT '103.211.14.82';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION DEFAULT 17.3850;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION DEFAULT 78.4867;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS location_city TEXT DEFAULT 'Sohna GLS Homes near GDGU, Haryana';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
 -- Enable Row Level Security (RLS)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Public profiles read access" ON public.profiles FOR SELECT USING (true);
-CREATE POLICY "Users update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+CREATE OR REPLACE FUNCTION public.is_admin_or_staff()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND (role = 'admin' OR role = 'staff')
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP POLICY IF EXISTS "Public profiles read access" ON public.profiles;
+DROP POLICY IF EXISTS "Users can read own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users insert own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Admins full control over profiles" ON public.profiles;
+
+CREATE POLICY "Users can read own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
+CREATE POLICY "Users insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Admins full control over profiles" ON public.profiles FOR ALL USING (public.is_admin_or_staff());
 
 -- TRIGGER FUNCTION
 CREATE OR REPLACE FUNCTION public.handle_new_user_signup()
 RETURNS TRIGGER AS $$
+DECLARE
+  user_phone TEXT;
+  user_name TEXT;
+  assigned_role TEXT;
 BEGIN
+  user_phone := COALESCE(NEW.raw_user_meta_data->>'phone', '');
+  user_name := COALESCE(NEW.raw_user_meta_data->>'full_name', SPLIT_PART(NEW.email, '@', 1));
+  IF NEW.email = 'admin@gallery.app' OR NEW.email = 'nagapavankumarjavisetty@gmail.com' THEN
+    assigned_role := 'admin';
+  ELSE
+    assigned_role := 'customer';
+  END IF;
+
   INSERT INTO public.profiles (
     id, email, full_name, phone, hostel_address, role, account_status, is_whatsapp_verified, is_approved, is_active, auth_provider, ip_address, latitude, longitude
   )
   VALUES (
     NEW.id,
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', SPLIT_PART(NEW.email, '@', 1)),
-    COALESCE(NEW.raw_user_meta_data->>'phone', ''),
-    COALESCE(NEW.raw_user_meta_data->>'hostel_address', 'Campus Hostel'),
-    'customer',
+    user_name,
+    user_phone,
+    COALESCE(NEW.raw_user_meta_data->>'hostel_address', ''),
+    assigned_role,
     'active',
     FALSE,
+    (assigned_role = 'admin'),
     TRUE,
-    TRUE,
-    'Supabase Auth',
+    'Email',
     COALESCE(NEW.raw_user_meta_data->>'ip_address', '103.211.14.82'),
     COALESCE((NEW.raw_user_meta_data->>'latitude')::double precision, 17.3850),
     COALESCE((NEW.raw_user_meta_data->>'longitude')::double precision, 78.4867)
   )
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+    phone = EXCLUDED.phone,
+    hostel_address = EXCLUDED.hostel_address,
+    updated_at = NOW();
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user_signup();
