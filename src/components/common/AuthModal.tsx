@@ -569,17 +569,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                   <div>
                     <label className="block text-xs font-bold text-gray-300 mb-1">
-                      Enter 6-Digit Google OTP *
+                      Enter Google OTP *
                     </label>
                     <div className="relative">
                       <Key className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input
                         type="text"
-                        maxLength={6}
+                        maxLength={8}
                         value={enteredOtp}
                         onChange={(e) => setEnteredOtp(e.target.value)}
                         required
-                        placeholder="6-Digit OTP Code"
+                        placeholder="OTP Code"
                         className="w-full pl-9 pr-3 py-3 bg-[#181818] border border-white/10 rounded-xl text-center text-lg font-mono tracking-widest text-orange-400 font-black outline-none focus:border-orange-500"
                       />
                     </div>
@@ -802,24 +802,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </span>
                 </div>
                 <p className="text-gray-300 text-[11px] leading-relaxed">
-                  A 6-digit OTP security code has been sent to <strong className="text-white">{email}</strong>. Please check your email inbox to verify.
+                  An OTP security code has been sent to <strong className="text-white">{email}</strong>. Please check your email inbox to verify.
                 </p>
               </div>
 
               {/* OTP Input Field */}
               <div>
                 <label className="block text-xs font-bold text-gray-300 mb-1">
-                  Enter 6-Digit Email OTP *
+                  Enter Email OTP Code *
                 </label>
                 <div className="relative">
                   <Key className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
-                    maxLength={6}
+                    maxLength={8}
                     value={enteredOtp}
                     onChange={(e) => setEnteredOtp(e.target.value)}
                     required
-                    placeholder="e.g. 839201"
+                    placeholder="Enter Code"
                     className="w-full pl-9 pr-3 py-3 bg-[#181818] border border-white/10 rounded-xl text-center text-lg font-mono tracking-widest text-orange-400 font-black outline-none focus:border-orange-500"
                   />
                 </div>

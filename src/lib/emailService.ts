@@ -108,11 +108,11 @@ export async function verifyEmailOTPCode(
   const token = enteredOtp.trim();
 
   if (!token) {
-    return { success: false, message: 'Please enter the 6-digit code sent to your email.' };
+    return { success: false, message: 'Please enter the verification code sent to your email.' };
   }
 
-  if (!/^\d{6}$/.test(token)) {
-    return { success: false, message: 'Enter the 6-digit code from your email.' };
+  if (!/^\d{6,8}$/.test(token)) {
+    return { success: false, message: 'Enter the verification code from your email.' };
   }
 
   if (!isSupabaseConfigured) {

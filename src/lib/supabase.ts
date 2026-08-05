@@ -34,6 +34,10 @@ export const supabaseConfigError: string | null = (() => {
     return 'Supabase credentials are still set to placeholder values.';
   }
 
+  if (rawAnonKey.startsWith('sb_publishable_')) {
+    return "VITE_SUPABASE_ANON_KEY is set to a publishable key ('sb_publishable_...'). Please replace it with the JWT anon public key ('eyJhbGci...').";
+  }
+
   if (!/^https?:\/\/[a-z0-9-.]+/i.test(rawUrl)) {
     return `VITE_SUPABASE_URL does not look like a valid URL: "${rawUrl}".`;
   }

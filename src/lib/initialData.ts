@@ -11,7 +11,7 @@ export const initialKitchenSettings: KitchenSettings = {
   tax_percent: 0,
   estimated_delivery_mins: 30,
   restaurant_upi_id: "7671018757@ybl",
-  whatsapp_number: "8569955029",
+  whatsapp_number: "8569955929",
   closed_banner_message: "RESTAURANT IS CURRENTLY CLOSED (Opening Hours: 9:00 AM to 10:00 PM) - you can still browse the menu.",
   lat: 17.4483,
   lng: 78.3915,

@@ -140,17 +140,19 @@ function MainApp() {
         const { data: menu } = await supabase.from('menu_items').select('*');
         if (menu && menu.length > 0) setMenuItems(menu as MenuItem[]);
 
-        const { data: ords } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-        if (ords && ords.length > 0) setOrders(ords as Order[]);
+        if (user && (user.role === 'admin' || user.role === 'staff')) {
+          const { data: ords } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+          if (ords && ords.length > 0) setOrders(ords as Order[]);
 
-        const { data: profs } = await supabase.from('profiles').select('*');
-        if (profs && profs.length > 0) {
-          const pending = profs.filter(p => !p.is_approved && p.role === 'customer');
-          const team = profs.filter(p => p.role === 'admin' || p.role === 'staff' || p.role === 'driver');
-          const custs = profs.filter(p => p.role === 'customer' && p.is_approved);
-          setPendingUsers(pending as UserProfile[]);
-          if (team.length > 0) setStaffList(team as UserProfile[]);
-          if (custs.length > 0) setCustomersList(custs as UserProfile[]);
+          const { data: profs } = await supabase.from('profiles').select('*');
+          if (profs && profs.length > 0) {
+            const pending = profs.filter(p => !p.is_approved && p.role === 'customer');
+            const team = profs.filter(p => p.role === 'admin' || p.role === 'staff' || p.role === 'driver');
+            const custs = profs.filter(p => p.role === 'customer' && p.is_approved);
+            setPendingUsers(pending as UserProfile[]);
+            if (team.length > 0) setStaffList(team as UserProfile[]);
+            if (custs.length > 0) setCustomersList(custs as UserProfile[]);
+          }
         }
       } catch (err) {
         console.error('Supabase fetch error', err);
@@ -158,7 +160,7 @@ function MainApp() {
     }
 
     loadSupabaseData();
-  }, []);
+  }, [user]);
 
   // Ensure default landing page is ALWAYS 'menu' (Home Page) on mount
   useEffect(() => {
