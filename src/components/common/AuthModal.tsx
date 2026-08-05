@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
 import { X, Lock, Mail, User, Phone, MapPin, AlertCircle, ShieldCheck, Key, RefreshCw, CheckCircle, Navigation, ShieldAlert } from 'lucide-react';
 import { UserProfile } from '../../types';
 import { sendEmailVerificationOTP, verifyEmailOTPCode, sendPasswordResetOTP, resetPasswordWithOTP } from '../../lib/emailService';
@@ -215,6 +216,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const geo = await captureSecurityDetails();
     if (!geo.isOK) return;
 
+    // Check if email or phone number is already registered
+    const { data: existingProfiles } = await supabase
+      .from('profiles')
+      .select('email, phone')
+      .or(`email.ilike.${cleanEmail},phone.eq.${cleanPhone}`);
+
+    if (existingProfiles && existingProfiles.length > 0) {
+      const matchEmail = existingProfiles.some(p => p.email?.toLowerCase() === cleanEmail);
+      if (matchEmail) {
+        setErrorMsg('This email address is already registered. Please sign in instead or use Forgot Password.');
+        return;
+      }
+      const matchPhone = existingProfiles.some(p => p.phone === cleanPhone);
+      if (matchPhone) {
+        setErrorMsg('This mobile phone number is already registered to another account. Please sign in instead.');
+        return;
+      }
+    }
+
     // Send verification OTP to email
     const result = await sendEmailVerificationOTP(cleanEmail, cleanName);
     if (!result.success) {
@@ -333,6 +353,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     await captureSecurityDetails();
+
+    // Check if email or phone is already registered
+    const { data: existingGoogleProfiles } = await supabase
+      .from('profiles')
+      .select('email, phone')
+      .or(`email.ilike.${cleanEmail},phone.eq.${cleanPhone}`);
+
+    if (existingGoogleProfiles && existingGoogleProfiles.length > 0) {
+      const matchEmail = existingGoogleProfiles.some(p => p.email?.toLowerCase() === cleanEmail);
+      if (matchEmail) {
+        setErrorMsg('This email address is already registered. Please sign in instead.');
+        return;
+      }
+      const matchPhone = existingGoogleProfiles.some(p => p.phone === cleanPhone);
+      if (matchPhone) {
+        setErrorMsg('This phone number is already registered to another account. Please sign in instead.');
+        return;
+      }
+    }
 
     const result = await sendEmailVerificationOTP(cleanEmail, cleanName || 'Google Customer');
     if (!result.success) {
