@@ -235,15 +235,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     }
 
-    // Send verification OTP to email
-    const result = await sendEmailVerificationOTP(cleanEmail, cleanName);
-    if (!result.success) {
-      setErrorMsg(result.message);
+    // Register account directly with Mobile Phone Number & Password!
+    const res = await signUp({
+      full_name: cleanName,
+      phone: cleanPhone,
+      hostel_address: cleanAddress,
+      email: cleanEmail,
+      password
+    });
+
+    if (!res.success) {
+      setErrorMsg(res.message);
       return;
     }
-    setResendTimer(60);
-    setRegStep('otp_verify');
-    setInfoMsg(result.message);
+
+    setInfoMsg('Account created successfully! Welcome to Trippy\'s Mehfill.');
+    setTimeout(() => {
+      onClose();
+    }, 800);
   };
 
   const handleResendOtp = async () => {
