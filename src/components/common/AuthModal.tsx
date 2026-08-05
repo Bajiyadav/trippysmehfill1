@@ -97,6 +97,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setIsLocating(false);
     return { lat: geoResult.latitude, lng: geoResult.longitude, ip: geoResult.ipAddress, isOK: true };
+  };
+
   const handleSendForgotOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
