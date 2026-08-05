@@ -64,6 +64,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const loadProfile = useCallback(async (activeSession: Session): Promise<UserProfile | null> => {
     const authUser = activeSession.user;
+    const isAdminEmail = authUser.email?.toLowerCase() === 'nagapavankumarjavisetty@gmail.com' || authUser.email?.toLowerCase() === 'admin@gallery.app';
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -76,10 +77,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await supabase.auth.signOut();
         return null;
       }
+      if (isAdminEmail && profile.role !== 'admin') {
+        await supabase.from('profiles').update({ role: 'admin' }).eq('id', authUser.id);
+        profile.role = 'admin';
+      }
       return profile as UserProfile;
     }
 
-    // First sign-in for this auth user: create a minimal profile from metadata.
+    // First sign-in for this auth user: create a profile from metadata.
     const meta = (authUser.user_metadata || {}) as Record<string, any>;
     const newProfile: UserProfile = {
       id: authUser.id,
@@ -87,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       full_name: meta.full_name || authUser.email?.split('@')[0] || 'Customer',
       phone: meta.phone || '',
       hostel_address: meta.hostel_address || '',
-      role: 'customer',
+      role: isAdminEmail ? 'admin' : 'customer',
       is_whatsapp_verified: true,
       is_approved: true,
       is_active: true,
@@ -97,7 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: inserted } = await supabase
       .from('profiles')
-      .insert([newProfile])
+      .upsert([newProfile], { onConflict: 'id' })
       .select()
       .maybeSingle();
 
@@ -124,7 +129,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   // Restore any persisted session on load, then track auth state changes.
-  // supabase-js refreshes the access token automatically (autoRefreshToken).
   useEffect(() => {
     if (!isSupabaseConfigured) {
       setInitializing(false);
@@ -162,16 +166,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: NOT_CONFIGURED_MESSAGE };
     }
 
-    const email = identifier.trim().toLowerCase();
+    let email = identifier.trim().toLowerCase();
     if (!email || !password) {
-      return { success: false, message: 'Please enter your email address and password.' };
-    }
-    if (!email.includes('@')) {
-      return { success: false, message: 'Please sign in with your email address.' };
+      return { success: false, message: 'Please enter your email/phone and password.' };
     }
 
     setLoading(true);
     try {
+      // If identifier is not an email (e.g. phone number or username), find email from profiles
+      if (!email.includes('@')) {
+        const { data: foundProfile } = await supabase
+          .from('profiles')
+          .select('email')
+          .or(`phone.eq.${identifier.trim()},username.eq.${identifier.trim().toLowerCase()}`)
+          .maybeSingle();
+
+        if (foundProfile && foundProfile.email) {
+          email = foundProfile.email.toLowerCase();
+        } else {
+          return {
+            success: false,
+            message: 'No account found with this phone number or username. Please check your details or enter your email.'
+          };
+        }
+      }
+
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
@@ -185,13 +204,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return {
             success: false,
             message: 'Account Suspended: Suspicious anti-fraud activity detected.'
-          };
-        }
-        if (!profile.is_approved && profile.role === 'customer') {
-          await supabase.auth.signOut();
-          return {
-            success: false,
-            message: 'Your registration is pending admin approval. Please try again later.'
           };
         }
 
@@ -209,10 +221,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /**
    * Completes registration AFTER the email OTP has been verified.
-   *
-   * Verifying the code establishes a Supabase session for a passwordless user;
-   * this sets the password they chose and writes their profile row, so they can
-   * subsequently sign in with a password.
    */
   const signUp = async (data: {
     full_name: string;
@@ -239,56 +247,74 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setLoading(true);
     try {
+      const cleanEmail = data.email.trim().toLowerCase();
+      const isAdminEmail = cleanEmail === 'nagapavankumarjavisetty@gmail.com' || cleanEmail === 'admin@gallery.app';
+
       const {
         data: { session: activeSession }
       } = await supabase.auth.getSession();
 
-      if (!activeSession) {
-        return {
-          success: false,
-          message: 'Your verification session has expired. Please request a new code.'
-        };
+      let targetUserId: string | null = activeSession?.user.id || null;
+
+      if (activeSession) {
+        await supabase.auth.updateUser({
+          password: data.password,
+          data: {
+            full_name: data.full_name.trim(),
+            phone: data.phone.trim(),
+            hostel_address: data.hostel_address.trim()
+          }
+        });
+      } else {
+        // Fallback: create user via auth.signUp if session wasn't active
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password: data.password,
+          options: {
+            data: {
+              full_name: data.full_name.trim(),
+              phone: data.phone.trim(),
+              hostel_address: data.hostel_address.trim()
+            }
+          }
+        });
+        if (signUpError && !signUpData.user) {
+          return { success: false, message: toFriendlyAuthError(signUpError).message };
+        }
+        if (signUpData.user) {
+          targetUserId = signUpData.user.id;
+        }
       }
 
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: data.password,
-        data: {
+      if (targetUserId) {
+        const profile: UserProfile = {
+          id: targetUserId,
+          email: cleanEmail,
           full_name: data.full_name.trim(),
           phone: data.phone.trim(),
-          hostel_address: data.hostel_address.trim()
+          hostel_address: data.hostel_address.trim(),
+          role: isAdminEmail ? 'admin' : 'customer',
+          is_whatsapp_verified: true,
+          is_approved: true,
+          is_active: true,
+          auth_provider: 'Email',
+          created_at: new Date().toISOString()
+        };
+
+        const { error: profileError } = await supabase.from('profiles').upsert([profile], { onConflict: 'id' });
+        if (profileError) {
+          console.error('[Auth] Profile upsert failed:', profileError);
         }
-      });
-
-      if (updateError) {
-        return { success: false, message: toFriendlyAuthError(updateError).message };
+        setUser(profile);
       }
 
-      const profile: UserProfile = {
-        id: activeSession.user.id,
-        email: data.email.trim().toLowerCase(),
-        full_name: data.full_name.trim(),
-        phone: data.phone.trim(),
-        hostel_address: data.hostel_address.trim(),
-        role: 'customer',
-        account_status: 'active',
-        is_whatsapp_verified: true,
-        is_approved: true,
-        is_active: true,
-        auth_provider: 'Email',
-        created_at: new Date().toISOString()
-      };
-
-      const { error: profileError } = await supabase.from('profiles').upsert([profile]);
-      if (profileError) {
-        console.error('[Auth] Profile upsert failed:', profileError);
+      if (activeSession) {
+        setSession(activeSession);
       }
-
-      setUser(profile);
-      setSession(activeSession);
 
       return {
         success: true,
-        message: 'Account created! Your registration is sent for Admin approval before ordering.'
+        message: 'Account created successfully!'
       };
     } catch (e) {
       return { success: false, message: toFriendlyAuthError(e).message };
