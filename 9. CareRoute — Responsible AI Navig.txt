@@ -1,0 +1,24 @@
+9. CareRoute — Responsible AI Navigation Assistant
+Purpose
+A safety-focused assistant that helps users understand possible next steps in a healthcare-navigation journey.
+
+Main features
+User goal and context
+Clarifying questions
+Suggested next steps
+Trusted sources
+Human escalation
+Saved journey
+AI-native interaction
+Explainable suggestions
+Uncertainty states
+Safety messaging
+Human handoff
+Clear boundaries around AI capability
+Skills demonstrated
+Responsible AI design
+Safety-critical UX
+Conversation design
+Progressive disclosure
+Trust-building
+Present this as a navigation prototype, not a diagnosis tool.
