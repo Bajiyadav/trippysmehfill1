@@ -33,6 +33,26 @@ export function calculateDistanceKm(
 }
 
 /**
+ * Formats distance in meters if less than 1 km, or kilometers if 1 km or more.
+ */
+export function formatDistanceText(distanceKm: number): string {
+  if (!distanceKm || distanceKm <= 0) return '0.1 km (Local)';
+  if (distanceKm < 1) {
+    const meters = Math.round(distanceKm * 1000);
+    return `${meters} meters from GLS Kitchen`;
+  }
+  return `${distanceKm} km from GLS Kitchen`;
+}
+
+/**
+ * Generates Google Maps delivery navigation route URL from GLS Homes Kitchen to customer location.
+ */
+export function getRouteDirectionsUrl(customerLat: number, customerLng: number): string {
+  if (!customerLat || !customerLng) return `https://www.google.com/maps?q=${KITCHEN_LAT},${KITCHEN_LNG}`;
+  return `https://www.google.com/maps/dir/${KITCHEN_LAT},${KITCHEN_LNG}/${customerLat},${customerLng}`;
+}
+
+/**
  * Fetches user's public IP address from client
  */
 export async function fetchPublicIP(): Promise<string> {

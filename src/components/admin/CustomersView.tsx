@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { UserProfile } from '../../types';
 import { UserCheck, Search, Plus, Mail, Phone, MapPin, Key, Trash2, CheckCircle, XCircle, ShieldAlert, User, Calendar, Database, Copy, Check, MessageSquare, Lock, ShieldCheck } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { formatDistanceText, getRouteDirectionsUrl } from '../../lib/geoUtils';
 
 interface CustomersViewProps {
   customersList: UserProfile[];
@@ -565,29 +566,39 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
                       </div>
 
                       {/* Hardware GPS & Live Google Maps Link */}
-                      <div className="space-y-1 bg-[#181818] p-2 rounded-xl border border-white/10 text-[10px]">
+                      <div className="space-y-1 bg-[#181818] p-2.5 rounded-xl border border-white/10 text-[10px]">
                         <div className="flex items-center justify-between">
                           <span className="text-gray-400 font-bold flex items-center gap-1">
-                            <MapPin className="w-3 h-3 text-orange-400" /> GPS Location:
+                            <MapPin className="w-3 h-3 text-orange-400" /> GPS Distance:
                           </span>
-                          <span className="text-emerald-400 font-mono font-bold">
-                            {cust.distance_km ? `${cust.distance_km} km` : '0.1 km'} from Kitchen
+                          <span className="text-emerald-400 font-mono font-extrabold">
+                            📍 {formatDistanceText(cust.distance_km || 0.1)}
                           </span>
                         </div>
 
                         {cust.latitude && cust.longitude && (
-                          <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                          <div className="flex items-center justify-between pt-1 border-t border-white/5 gap-1">
                             <span className="text-gray-500 font-mono text-[9px]">
                               Acc: ±{cust.gps_accuracy || 15}m
                             </span>
-                            <a
-                              href={cust.google_maps_url || `https://www.google.com/maps?q=${cust.latitude},${cust.longitude}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="px-2 py-0.5 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold rounded-md transition text-[10px] flex items-center gap-1 shadow-md"
-                            >
-                              📍 Open Live Map
-                            </a>
+                            <div className="flex items-center gap-1">
+                              <a
+                                href={`https://www.google.com/maps?q=${cust.latitude},${cust.longitude}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-gray-300 font-bold rounded transition text-[9px] border border-white/10"
+                              >
+                                📍 Live Pos
+                              </a>
+                              <a
+                                href={getRouteDirectionsUrl(cust.latitude, cust.longitude)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-2 py-0.5 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold rounded transition text-[10px] flex items-center gap-1 shadow-md"
+                              >
+                                🗺️ Route from GLS
+                              </a>
+                            </div>
                           </div>
                         )}
                       </div>

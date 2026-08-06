@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Order, OrderStatus, UserProfile } from '../../types';
 import { Bike, Phone, MapPin, CheckCircle2, Clock, XCircle, ChevronDown } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { formatDistanceText, getRouteDirectionsUrl } from '../../lib/geoUtils';
 
 interface LiveOrdersViewProps {
   orders: Order[];
@@ -106,16 +107,26 @@ export const LiveOrdersView: React.FC<LiveOrdersViewProps> = ({
 
                   <div className="flex items-center justify-between pt-1 border-t border-neutral-800 text-[10px]">
                     <span className="text-emerald-400 font-bold font-mono">
-                      📍 {order.distance_km ? `${order.distance_km} km` : '0.1 km'} from Kitchen
+                      📍 {formatDistanceText(order.distance_km || 0.1)}
                     </span>
-                    <a
-                      href={order.google_maps_url || (order.order_latitude && order.order_longitude ? `https://www.google.com/maps?q=${order.order_latitude},${order.order_longitude}` : 'https://www.google.com/maps?q=28.2468,77.0628')}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-2 py-0.5 bg-orange-600 hover:bg-orange-700 text-white font-extrabold rounded transition text-[10px] flex items-center gap-1 shadow-sm"
-                    >
-                      📍 Live Maps
-                    </a>
+                    <div className="flex items-center gap-1">
+                      <a
+                        href={order.google_maps_url || `https://www.google.com/maps?q=${order.order_latitude || 28.2468},${order.order_longitude || 77.0628}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-gray-300 font-bold rounded transition text-[9px] border border-neutral-700"
+                      >
+                        📍 Pos
+                      </a>
+                      <a
+                        href={getRouteDirectionsUrl(order.order_latitude || 28.2468, order.order_longitude || 77.0628)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2 py-0.5 bg-orange-600 hover:bg-orange-700 text-white font-extrabold rounded transition text-[10px] flex items-center gap-1 shadow-sm"
+                      >
+                        🗺️ Route from GLS
+                      </a>
+                    </div>
                   </div>
                 </div>
               </div>
