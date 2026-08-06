@@ -235,24 +235,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     }
 
-    // Register account directly with Mobile Phone Number & Password!
-    const res = await signUp({
-      full_name: cleanName,
-      phone: cleanPhone,
-      hostel_address: cleanAddress,
-      email: cleanEmail,
-      password
-    });
-
-    if (!res.success) {
-      setErrorMsg(res.message);
+    // Send Email Verification OTP to complete registration safely
+    const otpRes = await sendEmailVerificationOTP(cleanEmail, cleanName);
+    if (!otpRes.success) {
+      setErrorMsg(otpRes.message);
       return;
     }
 
-    setInfoMsg('Account created successfully! Welcome to Trippy\'s Mehfill.');
-    setTimeout(() => {
-      onClose();
-    }, 800);
+    setRegStep('otp_verify');
+    setResendTimer(60);
+    setInfoMsg(`Verification OTP code sent to ${cleanEmail}. Check your inbox!`);
   };
 
   const handleResendOtp = async () => {
@@ -272,8 +264,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setIsVerifyingOtp(true);
 
-    // Verifying the code with Supabase establishes the session that signUp then
-    // attaches the password and profile to.
+    // 1. Verify OTP with Supabase
     const verification = await verifyEmailOTPCode(email, enteredOtp);
     if (!verification.success) {
       setIsVerifyingOtp(false);
@@ -281,6 +272,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
+    // 2. Create authenticated user profile after OTP verification
     const created = await signUp({
       full_name: fullName,
       phone,
@@ -296,33 +288,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    const newCustomer: UserProfile = {
-      id: 'c-' + Date.now(),
-      email: email.trim().toLowerCase(),
-      full_name: fullName.trim(),
-      phone: phone.trim(),
-      hostel_address: hostelAddress.trim(),
-      role: 'customer',
-      account_status: 'active',
-      is_whatsapp_verified: true, // Auto-verified for instant ordering
-      is_approved: true, // Auto-approved for instant ordering
-      is_active: true,
-      auth_provider: 'Email',
-      ip_address: ipAddress,
-      latitude: latitude || KITCHEN_LAT,
-      longitude: longitude || KITCHEN_LNG,
-      location_city: locationCity,
-      created_at: new Date().toLocaleString()
-    };
-
-    if (onRegisterSuccess) {
-      onRegisterSuccess(newCustomer);
-    }
-
     setInfoMsg(created.message || 'Email verified and account created successfully!');
     setTimeout(() => {
       onClose();
-    }, 1200);
+    }, 1000);
   };
 
   const handleStartGoogleSignInFlow = () => {
@@ -417,30 +386,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         cleanPhone,
         cleanAddress,
         ipAddress,
-        latitude || 17.3850,
-        longitude || 78.4867
+        latitude || KITCHEN_LAT,
+        longitude || KITCHEN_LNG
       );
-
-      const newGoogleCustomer: UserProfile = {
-        id: 'g-user-' + Date.now(),
-        email: cleanEmail,
-        full_name: cleanName,
-        phone: cleanPhone,
-        hostel_address: cleanAddress,
-        role: 'customer',
-        is_approved: false, // Awaits admin approval, matching what is stored.
-        is_active: true,
-        auth_provider: 'Google',
-        ip_address: ipAddress,
-        latitude: latitude || 17.3850,
-        longitude: longitude || 78.4867,
-        location_city: locationCity,
-        created_at: new Date().toLocaleString()
-      };
-
-      if (onRegisterSuccess) {
-        onRegisterSuccess(newGoogleCustomer);
-      }
 
       setInfoMsg(`Verified & Signed in with Google as ${cleanEmail}!`);
       setTimeout(() => {

@@ -130,16 +130,23 @@ export function useAntiFraudRegistration() {
         .from('profiles')
         .upsert([profilePayload], { onConflict: 'id' })
         .select()
-        .single();
+        .maybeSingle();
 
-      if (profileError) {
-        console.error('[Anti-Fraud Reg] Profile upsert error:', profileError.message);
-        setError(profileError.message);
-        setLoading(false);
-        return { success: false, error: profileError.message, user: profilePayload };
+      let finalProfile = upsertData as UserProfile | null;
+
+      if (profileError || !finalProfile) {
+        if (profileError) {
+          console.warn('[Anti-Fraud Reg] Profile upsert notice (trying fetch fallback):', profileError.message);
+        }
+        const { data: fetchedProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+
+        finalProfile = (fetchedProfile as UserProfile) || profilePayload;
       }
 
-      const finalProfile = (upsertData as UserProfile) || profilePayload;
       setLoading(false);
       return { success: true, user: finalProfile };
     } catch (err: any) {

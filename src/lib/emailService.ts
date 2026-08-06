@@ -10,6 +10,7 @@ export interface SendOtpResult {
 export interface VerifyOtpResult {
   success: boolean;
   message: string;
+  userId?: string;
 }
 
 /**
@@ -152,17 +153,14 @@ export async function sendPasswordResetOTP(email: string): Promise<SendOtpResult
   }
 
   try {
-    // Check if profile exists first to prevent 500 auth errors on non-existent accounts
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('email')
-      .ilike('email', cleanEmail)
-      .maybeSingle();
+    // 1. Check if profile exists using SECURITY DEFINER RPC
+    const { data: exists } = await supabase.rpc('check_profile_exists', { p_email: cleanEmail });
 
-    if (!profile) {
+    // Anti-account enumeration: Return generic success message even if account does not exist
+    if (exists === false) {
       return {
-        success: false,
-        message: `No account found for "${cleanEmail}". Please click "Create Account" to register.`
+        success: true,
+        message: `If an account with "${cleanEmail}" exists in our system, a password reset OTP code has been dispatched to your inbox.`
       };
     }
 
@@ -174,7 +172,7 @@ export async function sendPasswordResetOTP(email: string): Promise<SendOtpResult
 
     return {
       success: true,
-      message: `Password reset OTP code sent to ${cleanEmail}. Check your inbox.`
+      message: `If an account with "${cleanEmail}" exists in our system, a password reset OTP code has been dispatched to your inbox.`
     };
   } catch (err) {
     return { success: false, message: toFriendlyAuthError(err).message };
