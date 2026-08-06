@@ -1,10 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { ShoppingBag, User, LogOut, Shield, Bike, HelpCircle, Bell } from 'lucide-react';
 import { AuthModal } from './AuthModal';
 import { SupportModal } from './SupportModal';
 import { UserRole } from '../../types';
+import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+
+interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  time: string;
+  type: 'order' | 'driver' | 'user';
+}
 
 interface HeaderProps {
   activeSection: 'menu' | 'track' | 'admin' | 'kitchen' | 'driver';
@@ -32,6 +41,84 @@ export const Header: React.FC<HeaderProps> = ({
   const [isSupportOpen, setIsSupportOpen] = useState(false);
   const [isMenuDropdownOpen, setIsMenuDropdownOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !user || (user.role !== 'admin' && user.role !== 'staff')) return;
+
+    // Fetch initial notifications from live orders & profiles
+    const fetchLiveNotifications = async () => {
+      try {
+        const { data: recentOrders } = await supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(5);
+
+        const items: NotificationItem[] = [];
+        if (recentOrders && recentOrders.length > 0) {
+          recentOrders.forEach((ord: any) => {
+            items.push({
+              id: 'notif-ord-' + ord.id,
+              title: `📦 Order ${ord.order_number || ord.id}`,
+              message: `${ord.customer_name || 'Customer'} • ₹${ord.total_amount || 0} (${ord.status || 'pending'})`,
+              time: ord.created_at ? new Date(ord.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
+              type: 'order'
+            });
+          });
+        }
+
+        setNotifications(items);
+      } catch (err) {
+        console.error('Error loading initial notifications:', err);
+      }
+    };
+
+    fetchLiveNotifications();
+
+    // Subscribe to REAL-TIME postgres changes from Supabase
+    const channel = supabase
+      .channel('realtime-erp-notifications')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'orders' },
+        (payload) => {
+          const newOrd = payload.new as any;
+          setNotifications((prev) => [
+            {
+              id: 'notif-ord-' + newOrd.id + '-' + Date.now(),
+              title: `📦 New Order ${newOrd.order_number || newOrd.id}`,
+              message: `${newOrd.customer_name || 'Customer'} • ₹${newOrd.total_amount || 0}`,
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: 'order'
+            },
+            ...prev.slice(0, 9)
+          ]);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'profiles' },
+        (payload) => {
+          const newProf = payload.new as any;
+          setNotifications((prev) => [
+            {
+              id: 'notif-prof-' + newProf.id + '-' + Date.now(),
+              title: `👤 Customer Registered`,
+              message: `${newProf.full_name || newProf.email} (${newProf.phone || 'New Customer'})`,
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: 'user'
+            },
+            ...prev.slice(0, 9)
+          ]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
 
   const handleLogoClick = () => {
     if (onLogoClick) {
@@ -188,21 +275,22 @@ export const Header: React.FC<HeaderProps> = ({
                         <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-bold px-2 py-0.5 rounded-full">Live</span>
                       </div>
 
-                      <div className="space-y-2 text-xs">
-                        <div className="p-2.5 bg-[#181818] rounded-xl border border-white/5 space-y-1">
-                          <p className="font-bold text-white">📦 New Order #ORD-8921</p>
-                          <p className="text-[11px] text-gray-400">Chicken Dum Biryani (x2) • Hostel 4</p>
-                        </div>
-
-                        <div className="p-2.5 bg-[#181818] rounded-xl border border-white/5 space-y-1">
-                          <p className="font-bold text-amber-400">🛵 Driver Assigned</p>
-                          <p className="text-[11px] text-gray-400">Ramesh Kumar assigned to Order #ORD-8920</p>
-                        </div>
-
-                        <div className="p-2.5 bg-[#181818] rounded-xl border border-white/5 space-y-1">
-                          <p className="font-bold text-blue-400">👤 Customer Registered</p>
-                          <p className="text-[11px] text-gray-400 font-mono">GPS Lat: 17.385, Lng: 78.486</p>
-                        </div>
+                      <div className="space-y-2 text-xs max-h-72 overflow-y-auto">
+                        {notifications.length === 0 ? (
+                          <div className="p-4 text-center text-gray-500 text-xs font-medium">
+                            No live notifications yet.
+                          </div>
+                        ) : (
+                          notifications.map((notif) => (
+                            <div key={notif.id} className="p-2.5 bg-[#181818] rounded-xl border border-white/5 space-y-0.5">
+                              <div className="flex items-center justify-between">
+                                <p className="font-bold text-white text-xs">{notif.title}</p>
+                                <span className="text-[10px] text-gray-500 font-mono">{notif.time}</span>
+                              </div>
+                              <p className="text-[11px] text-gray-400 truncate">{notif.message}</p>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
                   )}
