@@ -111,19 +111,9 @@ BEGIN
 END;
 $$;
 
--- 6. RLS Policies (Drop all existing & recreate recursion-proof policies)
-DO $$
-DECLARE
-    pol RECORD;
-BEGIN
-    FOR pol IN
-        SELECT policyname
-        FROM pg_policies
-        WHERE tablename = 'profiles' AND schemaname = 'public'
-    LOOP
-        EXECUTE format('DROP POLICY IF EXISTS %I ON public.profiles;', pol.policyname);
-    END LOOP;
-END $$;
+-- 6. RLS Policies (Idempotent: Drop existing policies first, then recreate)
+DROP POLICY IF EXISTS "Users access own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Admins full control profiles" ON public.profiles;
 
 -- Allow users to manage their own profile (auth.uid() = id has zero subqueries, preventing recursion)
 CREATE POLICY "Users access own profile" ON public.profiles
