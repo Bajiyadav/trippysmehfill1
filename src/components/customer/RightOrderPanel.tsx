@@ -115,9 +115,21 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
 
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('orders').insert([newOrder]);
-      } catch (err) {
-        console.error('Failed to sync order to Supabase:', err);
+        const { data: insertedOrder, error: insertError } = await supabase
+          .from('orders')
+          .insert([newOrder])
+          .select()
+          .single();
+
+        if (insertError) {
+          console.error('Failed to sync order to Supabase:', insertError.message);
+          throw new Error(insertError.message);
+        }
+      } catch (err: any) {
+        console.error('Order database insert error:', err);
+        setErrorMsg(`Order creation failed: ${err?.message || 'Database error'}`);
+        setIsPlacing(false);
+        return;
       }
     }
 

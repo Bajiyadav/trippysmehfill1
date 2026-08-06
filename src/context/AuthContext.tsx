@@ -330,11 +330,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           created_at: new Date().toISOString()
         };
 
-        const { error: profileError } = await supabase.from('profiles').upsert([profile], { onConflict: 'id' });
+        const { data: upsertData, error: profileError } = await supabase
+          .from('profiles')
+          .upsert([profile], { onConflict: 'id' })
+          .select()
+          .single();
+
         if (profileError) {
-          console.error('[Auth] Profile upsert failed:', profileError);
+          console.error('[Auth] Profile upsert failed:', profileError.message);
+          return { success: false, message: `Profile creation failed: ${profileError.message}` };
         }
-        setUser(profile);
+        setUser((upsertData as UserProfile) || profile);
       }
 
       if (activeSession) {

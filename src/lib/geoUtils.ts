@@ -78,6 +78,31 @@ export interface GeoLocationResult {
   errorMessage?: string;
 }
 
+export function captureLiveLocation(
+  onSuccess: (lat: number, lng: number) => void,
+  onError?: (errMessage: string) => void
+): void {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    const msg = 'Geolocation is not supported by your browser';
+    if (onError) onError(msg);
+    else alert(msg);
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      onSuccess(position.coords.latitude, position.coords.longitude);
+    },
+    (error) => {
+      console.error('Geolocation error:', error);
+      const msg = 'Please enable location permissions to proceed with accurate delivery location.';
+      if (onError) onError(msg);
+      else alert(msg);
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+  );
+}
+
 export interface FullSecurityContext {
   latitude: number;
   longitude: number;
