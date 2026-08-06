@@ -313,50 +313,54 @@ BEGIN
     assigned_role := 'customer';
   END IF;
 
-  INSERT INTO public.profiles (
-    id,
-    email,
-    full_name,
-    phone,
-    hostel_address,
-    role,
-    account_status,
-    is_whatsapp_verified,
-    is_approved,
-    is_active,
-    auth_provider,
-    ip_address,
-    latitude,
-    longitude,
-    location_city,
-    created_at,
-    updated_at
-  )
-  VALUES (
-    new.id,
-    user_email,
-    user_name,
-    user_phone,
-    COALESCE(new.raw_user_meta_data->>'hostel_address', ''),
-    assigned_role,
-    'active',
-    true,
-    true,
-    true,
-    'Email',
-    user_ip,
-    user_lat,
-    user_lng,
-    'Sohna GLS Homes near GDGU, Haryana',
-    now(),
-    now()
-  )
-  ON CONFLICT (id) DO UPDATE SET
-    email = EXCLUDED.email,
-    full_name = CASE WHEN EXCLUDED.full_name IS NOT NULL AND EXCLUDED.full_name <> '' THEN EXCLUDED.full_name ELSE public.profiles.full_name END,
-    phone = CASE WHEN EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone <> '' THEN EXCLUDED.phone ELSE public.profiles.phone END,
-    hostel_address = CASE WHEN EXCLUDED.hostel_address IS NOT NULL AND EXCLUDED.hostel_address <> '' THEN EXCLUDED.hostel_address ELSE public.profiles.hostel_address END,
-    updated_at = now();
+  BEGIN
+    INSERT INTO public.profiles (
+      id,
+      email,
+      full_name,
+      phone,
+      hostel_address,
+      role,
+      account_status,
+      is_whatsapp_verified,
+      is_approved,
+      is_active,
+      auth_provider,
+      ip_address,
+      latitude,
+      longitude,
+      location_city,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      new.id,
+      user_email,
+      user_name,
+      user_phone,
+      COALESCE(new.raw_user_meta_data->>'hostel_address', ''),
+      assigned_role,
+      'active',
+      true,
+      true,
+      true,
+      'Email',
+      user_ip,
+      user_lat,
+      user_lng,
+      'Sohna GLS Homes near GDGU, Haryana',
+      now(),
+      now()
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      email = EXCLUDED.email,
+      full_name = CASE WHEN EXCLUDED.full_name IS NOT NULL AND EXCLUDED.full_name <> '' THEN EXCLUDED.full_name ELSE public.profiles.full_name END,
+      phone = CASE WHEN EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone <> '' THEN EXCLUDED.phone ELSE public.profiles.phone END,
+      hostel_address = CASE WHEN EXCLUDED.hostel_address IS NOT NULL AND EXCLUDED.hostel_address <> '' THEN EXCLUDED.hostel_address ELSE public.profiles.hostel_address END,
+      updated_at = now();
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'handle_new_user_signup profile insert warning: %', SQLERRM;
+  END;
 
   RETURN new;
 END;
