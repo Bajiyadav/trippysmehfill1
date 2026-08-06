@@ -48,6 +48,7 @@ export async function sendEmailVerificationOTP(
     });
 
     if (error) {
+      console.error('[Auth] sendEmailVerificationOTP error:', error);
       return { success: false, message: toFriendlyAuthError(error).message };
     }
 
@@ -170,6 +171,7 @@ export async function sendPasswordResetOTP(email: string): Promise<SendOtpResult
     });
 
     if (error) {
+      console.error('[Auth] sendPasswordResetOTP error:', error);
       return { success: false, message: toFriendlyAuthError(error).message };
     }
 
