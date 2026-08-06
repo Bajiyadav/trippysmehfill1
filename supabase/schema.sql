@@ -53,12 +53,40 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_approved boolean DEFAULT
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS auth_provider text DEFAULT 'Email';
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS ip_address text DEFAULT '103.211.14.82';
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS latitude double precision DEFAULT 17.3850;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS longitude double precision DEFAULT 78.4867;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS location_city text DEFAULT 'Sohna GLS Homes near GDGU, Haryana';
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS registration_ip text DEFAULT '103.211.14.82';
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS signup_latitude numeric DEFAULT 17.3850;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS signup_longitude numeric DEFAULT 78.4867;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS latitude double precision DEFAULT 28.2468;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS longitude double precision DEFAULT 77.0628;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS location_city text DEFAULT 'Sohna / Gurgaon';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS gps_accuracy numeric DEFAULT 15;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS gps_allowed boolean DEFAULT true;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS city text DEFAULT 'Sohna / Gurgaon';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS state text DEFAULT 'Haryana';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS country text DEFAULT 'India';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS pin_code text DEFAULT '122103';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS distance_km numeric DEFAULT 0.1;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS device_type text DEFAULT 'Desktop';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS os_name text DEFAULT 'Windows';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS browser_name text DEFAULT 'Chrome';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS timezone text DEFAULT 'Asia/Kolkata';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS google_maps_url text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS fraud_risk_level text DEFAULT 'low';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS fraud_risk_reasons text[];
+
+-- Order ERP Security & Geolocation metadata
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS customer_ip text DEFAULT '103.211.14.82';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS order_latitude double precision DEFAULT 28.2468;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS order_longitude double precision DEFAULT 77.0628;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS gps_accuracy numeric DEFAULT 15;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS gps_allowed boolean DEFAULT true;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS distance_km numeric DEFAULT 0.1;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS device_type text DEFAULT 'Desktop';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS os_name text DEFAULT 'Windows';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS browser_name text DEFAULT 'Chrome';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS city text DEFAULT 'Sohna / Gurgaon';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS state text DEFAULT 'Haryana';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS pin_code text DEFAULT '122103';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS google_maps_url text;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS fraud_risk_level text DEFAULT 'low';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS fraud_risk_reasons text[];
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT timezone('utc'::text, now());
 

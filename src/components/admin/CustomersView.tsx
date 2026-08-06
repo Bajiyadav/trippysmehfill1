@@ -516,39 +516,81 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
                       </div>
                     )}
 
-                    {/* Auth Provider & Anti-Fraud Security Data */}
-                    <div className="pt-2 border-t border-white/10 space-y-1.5 text-[11px]">
+                    {/* Auth Provider & Comprehensive ERP Anti-Fraud Security Data */}
+                    <div className="pt-2 border-t border-white/10 space-y-2 text-[11px]">
+                      {/* Fraud Risk Indicator Badge */}
                       <div className="flex items-center justify-between">
-                        <span className="text-gray-500 font-medium">Auth Provider:</span>
-                        <span className={`px-2 py-0.5 rounded-md font-mono font-bold text-[10px] uppercase border ${
-                          cust.auth_provider === 'Google'
-                            ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
-                            : 'bg-[#C5A059]/10 border-[#C5A059]/30 text-[#C5A059]'
+                        <span className="text-gray-500 font-medium">Anti-Fraud Risk:</span>
+                        <span className={`px-2 py-0.5 rounded-full font-extrabold text-[10px] uppercase border flex items-center gap-1 ${
+                          cust.fraud_risk_level === 'high'
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 font-black animate-pulse'
+                            : cust.fraud_risk_level === 'medium'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
                         }`}>
-                          {cust.auth_provider || 'Email'}
+                          {cust.fraud_risk_level === 'high' && '🔴 HIGH RISK'}
+                          {cust.fraud_risk_level === 'medium' && '⚠️ MEDIUM RISK'}
+                          {(!cust.fraud_risk_level || cust.fraud_risk_level === 'low') && '🟢 LOW RISK'}
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between font-mono text-[10px]">
-                        <span className="text-gray-500">Security IP:</span>
-                        <span className="text-gray-300 bg-[#181818] px-1.5 py-0.5 rounded border border-white/10">
-                          {cust.ip_address || '103.211.14.82'}
-                        </span>
-                      </div>
-
-                      {cust.latitude && cust.longitude && (
-                        <div className="flex items-center justify-between font-mono text-[10px]">
-                          <span className="text-gray-500">Hardware GPS:</span>
-                          <a
-                            href={`https://maps.google.com/?q=${cust.latitude},${cust.longitude}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[#C5A059] hover:underline flex items-center gap-1 font-bold"
-                          >
-                            📍 {cust.latitude.toFixed(4)}, {cust.longitude.toFixed(4)}
-                          </a>
+                      {/* Warning reasons if any */}
+                      {cust.fraud_risk_reasons && cust.fraud_risk_reasons.length > 0 && (
+                        <div className="p-2 bg-rose-950/30 border border-rose-500/30 rounded-xl space-y-1 text-[10px] text-rose-300">
+                          {cust.fraud_risk_reasons.map((r, i) => (
+                            <p key={i} className="font-bold flex items-start gap-1">
+                              <span>•</span>
+                              <span>{r}</span>
+                            </p>
+                          ))}
                         </div>
                       )}
+
+                      {/* Device, OS & Browser */}
+                      <div className="flex items-center justify-between text-[10px] text-gray-400 bg-[#181818] p-2 rounded-xl border border-white/5">
+                        <div className="flex items-center gap-1 font-bold text-white">
+                          <span>💻 {cust.device_type || 'Desktop'}</span>
+                          <span className="text-gray-500">•</span>
+                          <span className="text-gray-300">{cust.os_name || 'Windows 11'}</span>
+                        </div>
+                        <span className="font-mono text-orange-400 font-bold">{cust.browser_name || 'Chrome'}</span>
+                      </div>
+
+                      {/* Public IP */}
+                      <div className="flex items-center justify-between font-mono text-[10px]">
+                        <span className="text-gray-500">Public IP:</span>
+                        <span className="text-gray-300 bg-[#181818] px-2 py-0.5 rounded border border-white/10 font-bold">
+                          🌐 {cust.ip_address || '103.211.14.82'}
+                        </span>
+                      </div>
+
+                      {/* Hardware GPS & Live Google Maps Link */}
+                      <div className="space-y-1 bg-[#181818] p-2 rounded-xl border border-white/10 text-[10px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 font-bold flex items-center gap-1">
+                            <MapPin className="w-3 h-3 text-orange-400" /> GPS Location:
+                          </span>
+                          <span className="text-emerald-400 font-mono font-bold">
+                            {cust.distance_km ? `${cust.distance_km} km` : '0.1 km'} from Kitchen
+                          </span>
+                        </div>
+
+                        {cust.latitude && cust.longitude && (
+                          <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                            <span className="text-gray-500 font-mono text-[9px]">
+                              Acc: ±{cust.gps_accuracy || 15}m
+                            </span>
+                            <a
+                              href={cust.google_maps_url || `https://www.google.com/maps?q=${cust.latitude},${cust.longitude}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-2 py-0.5 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold rounded-md transition text-[10px] flex items-center gap-1 shadow-md"
+                            >
+                              📍 Open Live Map
+                            </a>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     {cust.created_at && (

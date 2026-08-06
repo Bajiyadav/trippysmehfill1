@@ -58,51 +58,139 @@ export interface GeoLocationResult {
   errorMessage?: string;
 }
 
+export interface FullSecurityContext {
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number;
+  gpsAllowed: boolean;
+  distanceKm: number;
+  ipAddress: string;
+  city: string;
+  state: string;
+  country: string;
+  pinCode: string;
+  deviceType: 'Mobile' | 'Tablet' | 'Desktop';
+  osName: string;
+  browserName: string;
+  timezone: string;
+  googleMapsUrl: string;
+  fraudRiskLevel: 'low' | 'medium' | 'high';
+  fraudRiskReasons: string[];
+}
+
+export function detectDeviceAndOS(): {
+  deviceType: 'Mobile' | 'Tablet' | 'Desktop';
+  osName: string;
+  browserName: string;
+  timezone: string;
+} {
+  const ua = (typeof navigator !== 'undefined' ? navigator.userAgent : '').toLowerCase();
+
+  let deviceType: 'Mobile' | 'Tablet' | 'Desktop' = 'Desktop';
+  if (/ipad|tablet|(android(?!.*mobile))/i.test(ua)) {
+    deviceType = 'Tablet';
+  } else if (/mobile|iphone|ipod|android/i.test(ua)) {
+    deviceType = 'Mobile';
+  }
+
+  let osName = 'Windows';
+  if (ua.includes('windows nt 10.0')) osName = 'Windows 11/10';
+  else if (ua.includes('android')) osName = 'Android';
+  else if (/iphone|ipad|ipod/.test(ua)) osName = 'iOS';
+  else if (ua.includes('macintosh') || ua.includes('mac os')) osName = 'macOS';
+  else if (ua.includes('linux')) osName = 'Linux';
+
+  let browserName = 'Chrome';
+  if (ua.includes('edg')) browserName = 'Edge';
+  else if (ua.includes('chrome')) browserName = 'Chrome';
+  else if (ua.includes('safari')) browserName = 'Safari';
+  else if (ua.includes('firefox')) browserName = 'Firefox';
+  else if (ua.includes('opera') || ua.includes('opr')) browserName = 'Opera';
+
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
+
+  return { deviceType, osName, browserName, timezone };
+}
+
+export async function captureFullSecurityContext(): Promise<FullSecurityContext> {
+  const ipAddress = await fetchPublicIP();
+  const systemInfo = detectDeviceAndOS();
+
+  let latitude = KITCHEN_LAT;
+  let longitude = KITCHEN_LNG;
+  let accuracyMeters = 15;
+  let gpsAllowed = false;
+
+  if ('geolocation' in navigator) {
+    try {
+      const position: GeolocationPosition = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 4000,
+          maximumAge: 0
+        });
+      });
+
+      latitude = position.coords.latitude;
+      longitude = position.coords.longitude;
+      accuracyMeters = Math.round(position.coords.accuracy || 10);
+      gpsAllowed = true;
+    } catch {
+      gpsAllowed = false;
+    }
+  }
+
+  const distanceKm = calculateDistanceKm(latitude, longitude, KITCHEN_LAT, KITCHEN_LNG);
+  const googleMapsUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
+
+  const fraudRiskReasons: string[] = [];
+  let fraudRiskLevel: 'low' | 'medium' | 'high' = 'low';
+
+  if (!gpsAllowed) {
+    fraudRiskReasons.push('⚠️ GPS permission disabled / denied by user');
+    fraudRiskLevel = 'medium';
+  }
+
+  if (distanceKm > 15) {
+    fraudRiskReasons.push(`🚨 GPS location is ${distanceKm} km away from Sohna Kitchen`);
+    fraudRiskLevel = 'high';
+  } else if (distanceKm > 5) {
+    fraudRiskReasons.push(`⚠️ Location is ${distanceKm} km away (outside GDGU campus / Sohna core zone)`);
+    if (fraudRiskLevel === 'low') fraudRiskLevel = 'medium';
+  }
+
+  return {
+    latitude: parseFloat(latitude.toFixed(6)),
+    longitude: parseFloat(longitude.toFixed(6)),
+    accuracyMeters,
+    gpsAllowed,
+    distanceKm,
+    ipAddress,
+    city: 'Sohna / Gurgaon',
+    state: 'Haryana',
+    country: 'India',
+    pinCode: '122103',
+    deviceType: systemInfo.deviceType,
+    osName: systemInfo.osName,
+    browserName: systemInfo.browserName,
+    timezone: systemInfo.timezone,
+    googleMapsUrl,
+    fraudRiskLevel,
+    fraudRiskReasons
+  };
+}
+
 /**
  * Requests browser HTML5 Geolocation API.
  * Radius restriction is disabled - all locations are accepted smoothly.
  */
 export async function requestValidatedLocation(): Promise<GeoLocationResult> {
-  const ipAddress = await fetchPublicIP();
-
-  if (!('geolocation' in navigator)) {
-    return {
-      latitude: KITCHEN_LAT,
-      longitude: KITCHEN_LNG,
-      distanceKm: 0.1,
-      isWithinZone: true,
-      ipAddress
-    };
-  }
-
-  try {
-    const position: GeolocationPosition = await new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject, {
-        enableHighAccuracy: true,
-        timeout: 5000,
-        maximumAge: 0
-      });
-    });
-
-    const lat = position.coords.latitude;
-    const lng = position.coords.longitude;
-    const distanceKm = calculateDistanceKm(lat, lng, KITCHEN_LAT, KITCHEN_LNG);
-
-    return {
-      latitude: lat,
-      longitude: lng,
-      distanceKm,
-      isWithinZone: true,
-      ipAddress
-    };
-  } catch {
-    // Fallback gracefully to default kitchen coordinates without blocking user
-    return {
-      latitude: KITCHEN_LAT,
-      longitude: KITCHEN_LNG,
-      distanceKm: 0.1,
-      isWithinZone: true,
-      ipAddress
-    };
-  }
+  const security = await captureFullSecurityContext();
+  return {
+    latitude: security.latitude,
+    longitude: security.longitude,
+    distanceKm: security.distanceKm,
+    isWithinZone: true,
+    ipAddress: security.ipAddress
+  };
 }

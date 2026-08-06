@@ -6,6 +6,8 @@ import { Order, PaymentMethod } from '../../types';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { playKitchenAlertSound } from '../../lib/sound';
 
+import { captureFullSecurityContext } from '../../lib/geoUtils';
+
 interface RightOrderPanelProps {
   onOrderSuccess: (order: Order) => void;
   onRequireAuth: () => void;
@@ -59,6 +61,8 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
 
     setIsPlacing(true);
 
+    const sec = await captureFullSecurityContext();
+
     // Compute sequential order number (#1001, #1002, #1003...)
     const orderNums = existingOrders.map(o => {
       const match = o.order_number?.match(/\d+/);
@@ -91,6 +95,21 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
       payment_status: paymentMethod === 'UPI' ? 'completed' : 'pending',
       upi_transaction_id: upiTxnId,
       status: 'pending',
+      customer_ip: sec.ipAddress,
+      order_latitude: sec.latitude,
+      order_longitude: sec.longitude,
+      gps_accuracy: sec.accuracyMeters,
+      gps_allowed: sec.gpsAllowed,
+      distance_km: sec.distanceKm,
+      device_type: sec.deviceType,
+      os_name: sec.osName,
+      browser_name: sec.browserName,
+      city: sec.city,
+      state: sec.state,
+      pin_code: sec.pinCode,
+      google_maps_url: sec.googleMapsUrl,
+      fraud_risk_level: sec.fraudRiskLevel,
+      fraud_risk_reasons: sec.fraudRiskReasons,
       created_at: new Date().toLocaleString()
     };
 

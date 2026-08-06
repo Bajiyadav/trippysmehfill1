@@ -70,6 +70,54 @@ export const LiveOrdersView: React.FC<LiveOrdersViewProps> = ({
                 {order.landmark && (
                   <p className="text-[11px] text-gray-400 italic">Preference: {order.landmark}</p>
                 )}
+
+                {/* ERP Anti-Fraud & Live GPS Tracking Panel */}
+                <div className="bg-neutral-900 rounded-xl p-2.5 text-[11px] text-gray-300 space-y-1.5 border border-neutral-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400 font-medium text-[10px]">Anti-Fraud Risk:</span>
+                    <span className={`px-2 py-0.5 rounded-full font-black text-[9px] uppercase border flex items-center gap-1 ${
+                      order.fraud_risk_level === 'high'
+                        ? 'bg-rose-950 text-rose-300 border-rose-600 animate-pulse'
+                        : order.fraud_risk_level === 'medium'
+                        ? 'bg-amber-950 text-amber-300 border-amber-600'
+                        : 'bg-emerald-950 text-emerald-300 border-emerald-600'
+                    }`}>
+                      {order.fraud_risk_level === 'high' && '🔴 HIGH RISK'}
+                      {order.fraud_risk_level === 'medium' && '⚠️ MEDIUM RISK'}
+                      {(!order.fraud_risk_level || order.fraud_risk_level === 'low') && '🟢 LOW RISK'}
+                    </span>
+                  </div>
+
+                  {order.fraud_risk_reasons && order.fraud_risk_reasons.length > 0 && (
+                    <div className="p-1.5 bg-rose-950/40 border border-rose-500/30 rounded-lg space-y-0.5 text-[9px] text-rose-300">
+                      {order.fraud_risk_reasons.map((r, i) => (
+                        <p key={i} className="font-bold flex items-start gap-1">
+                          <span>•</span>
+                          <span>{r}</span>
+                        </p>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between text-[10px] text-gray-400 font-mono">
+                    <span>🌐 IP: {order.customer_ip || '103.211.14.82'}</span>
+                    <span className="text-orange-400 font-bold">{order.device_type || 'Desktop'} ({order.os_name || 'Windows'})</span>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 border-t border-neutral-800 text-[10px]">
+                    <span className="text-emerald-400 font-bold font-mono">
+                      📍 {order.distance_km ? `${order.distance_km} km` : '0.1 km'} from Kitchen
+                    </span>
+                    <a
+                      href={order.google_maps_url || (order.order_latitude && order.order_longitude ? `https://www.google.com/maps?q=${order.order_latitude},${order.order_longitude}` : 'https://www.google.com/maps?q=28.2468,77.0628')}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2 py-0.5 bg-orange-600 hover:bg-orange-700 text-white font-extrabold rounded transition text-[10px] flex items-center gap-1 shadow-sm"
+                    >
+                      📍 Live Maps
+                    </a>
+                  </div>
+                </div>
               </div>
 
               {/* Items List */}

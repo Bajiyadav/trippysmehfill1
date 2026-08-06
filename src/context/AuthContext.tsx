@@ -5,6 +5,7 @@ import { supabase, isSupabaseConfigured, supabaseConfigError } from '../lib/supa
 import { initialStaffAndDrivers } from '../lib/initialData';
 import { validateRegistration } from '../lib/validation';
 import { toFriendlyAuthError, NOT_CONFIGURED_MESSAGE } from '../lib/authErrors';
+import { captureFullSecurityContext } from '../lib/geoUtils';
 
 export interface AuthResult {
   success: boolean;
@@ -295,6 +296,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (targetUserId) {
+        const sec = await captureFullSecurityContext();
+
         const profile: UserProfile = {
           id: targetUserId,
           email: cleanEmail,
@@ -306,6 +309,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           is_approved: true,
           is_active: true,
           auth_provider: 'Email',
+          ip_address: sec.ipAddress,
+          latitude: sec.latitude,
+          longitude: sec.longitude,
+          location_city: sec.city,
+          gps_accuracy: sec.accuracyMeters,
+          gps_allowed: sec.gpsAllowed,
+          city: sec.city,
+          state: sec.state,
+          country: sec.country,
+          pin_code: sec.pinCode,
+          distance_km: sec.distanceKm,
+          device_type: sec.deviceType,
+          os_name: sec.osName,
+          browser_name: sec.browserName,
+          timezone: sec.timezone,
+          google_maps_url: sec.googleMapsUrl,
+          fraud_risk_level: sec.fraudRiskLevel,
+          fraud_risk_reasons: sec.fraudRiskReasons,
           created_at: new Date().toISOString()
         };
 
