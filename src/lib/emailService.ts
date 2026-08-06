@@ -164,7 +164,10 @@ export async function sendPasswordResetOTP(email: string): Promise<SendOtpResult
       };
     }
 
-    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+    const { error } = await supabase.auth.signInWithOtp({
+      email: cleanEmail,
+      options: { shouldCreateUser: false }
+    });
 
     if (error) {
       return { success: false, message: toFriendlyAuthError(error).message };
