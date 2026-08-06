@@ -190,13 +190,35 @@ function MainApp() {
     }
   };
 
+  // Re-fetch profiles from Supabase to guarantee state synchronization
+  const refreshProfilesFromSupabase = async () => {
+    if (!isSupabaseConfigured || !user) return;
+    try {
+      const { data: profs, error } = await supabase.from('profiles').select('*');
+      if (error) {
+        console.error('[App] Failed to refresh profiles:', error.message);
+        return;
+      }
+      if (profs) {
+        const pending = profs.filter(p => !p.is_approved && p.role === 'customer');
+        const team = profs.filter(p => p.role === 'admin' || p.role === 'staff' || p.role === 'driver');
+        const custs = profs.filter(p => p.role === 'customer' && p.is_approved);
+        setPendingUsers(pending as UserProfile[]);
+        setStaffList(team as UserProfile[]);
+        setCustomersList(custs as UserProfile[]);
+      }
+    } catch (err) {
+      console.error('[App] Error re-fetching profiles:', err);
+    }
+  };
+
   // Handlers
   const handleOrderPlaced = (newOrder: Order) => {
     setOrders(prev => [newOrder, ...prev]);
     setActiveTrackingOrder(newOrder);
   };
 
-  const handleUpdateOrderStatus = (orderId: string, status: OrderStatus, driverId?: string, driverName?: string) => {
+  const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus, driverId?: string, driverName?: string) => {
     setOrders(prev =>
       prev.map(o => {
         if (o.id === orderId) {
@@ -212,16 +234,22 @@ function MainApp() {
     );
 
     if (isSupabaseConfigured) {
-      supabase.from('orders').update({
+      const { error } = await supabase.from('orders').update({
         status,
         ...(driverId ? { driver_id: driverId } : {}),
         ...(driverName ? { driver_name: driverName } : {})
       }).eq('id', orderId);
+
+      if (error) {
+        console.error('Failed to update order status in Supabase:', error.message);
+      }
     }
   };
 
-  const handleApproveUser = (userId: string) => {
+  const handleApproveUser = async (userId: string) => {
     const userToApprove = pendingUsers.find(u => u.id === userId);
+
+    // CRITICAL: Immediately update local state so card disappears instantly
     setPendingUsers(prev => prev.filter(u => u.id !== userId));
 
     if (userToApprove) {
@@ -233,15 +261,27 @@ function MainApp() {
     }
 
     if (isSupabaseConfigured) {
-      supabase.from('profiles').update({ is_approved: true }).eq('id', userId);
+      const { error } = await supabase.from('profiles').update({ is_approved: true }).eq('id', userId);
+      if (error) {
+        console.error('Failed to approve user in Supabase:', error.message);
+      } else {
+        await refreshProfilesFromSupabase();
+      }
     }
   };
 
-  const handleRejectUser = (userId: string) => {
+  const handleRejectUser = async (userId: string) => {
+    // CRITICAL: Immediately update local state so card disappears instantly
     setPendingUsers(prev => prev.filter(u => u.id !== userId));
+    setCustomersList(prev => prev.filter(u => u.id !== userId));
 
     if (isSupabaseConfigured) {
-      supabase.from('profiles').delete().eq('id', userId);
+      const { error } = await supabase.from('profiles').delete().eq('id', userId);
+      if (error) {
+        console.error('Failed to delete profile from Supabase:', error.message);
+      } else {
+        await refreshProfilesFromSupabase();
+      }
     }
   };
 

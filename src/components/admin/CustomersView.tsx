@@ -766,10 +766,20 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
+                  if (!customerToDelete) return;
                   const deletedName = customerToDelete.full_name;
-                  onDeleteCustomer(customerToDelete.id);
+                  const targetId = customerToDelete.id;
                   setCustomerToDelete(null);
+
+                  // Immediate local UI cleanup
+                  onDeleteCustomer(targetId);
+
+                  if (isSupabaseConfigured) {
+                    const { error } = await supabase.from('profiles').delete().eq('id', targetId);
+                    if (error) console.error('Error deleting profile:', error.message);
+                  }
+
                   setSuccessMsg(`Customer account for "${deletedName}" was permanently deleted.`);
                   setTimeout(() => setSuccessMsg(''), 4000);
                 }}
