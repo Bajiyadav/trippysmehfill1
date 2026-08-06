@@ -64,37 +64,52 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at timestamp with t
 
 -- 5. Helper Function to Check Admin/Staff Privileges (SECURITY DEFINER prevents RLS infinite recursion)
 CREATE OR REPLACE FUNCTION public.is_admin_or_staff()
-RETURNS boolean AS $$
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
+  -- Always grant admin if JWT email matches admin accounts
+  IF lower(coalesce(auth.jwt() ->> 'email', '')) IN ('nagapavankumarjavisetty@gmail.com', 'admin@gallery.app') THEN
+    RETURN true;
+  END IF;
+
+  -- Read role bypassing RLS recursion
   RETURN EXISTS (
     SELECT 1 FROM public.profiles
-    WHERE id = auth.uid() AND (role = 'admin' OR role = 'staff')
+    WHERE id = auth.uid() AND role IN ('admin', 'staff')
   );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
--- 6. RLS Policies (Safe recreate)
-DROP POLICY IF EXISTS "Public profiles read access" ON public.profiles;
-DROP POLICY IF EXISTS "Users can read own profile" ON public.profiles;
-DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
-DROP POLICY IF EXISTS "Users insert own profile" ON public.profiles;
-DROP POLICY IF EXISTS "Admins full control over profiles" ON public.profiles;
+-- 6. RLS Policies (Drop all existing & recreate recursion-proof policies)
+DO $$
+DECLARE
+    pol RECORD;
+BEGIN
+    FOR pol IN
+        SELECT policyname
+        FROM pg_policies
+        WHERE tablename = 'profiles' AND schemaname = 'public'
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.profiles;', pol.policyname);
+    END LOOP;
+END $$;
 
--- Allow users to read their own profile
-CREATE POLICY "Users can read own profile" ON public.profiles
-  FOR SELECT USING (auth.uid() = id);
+-- Allow users to manage their own profile (auth.uid() = id has zero subqueries, preventing recursion)
+CREATE POLICY "Users access own profile" ON public.profiles
+  FOR ALL
+  TO authenticated, anon
+  USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
 
--- Allow authenticated users to insert their own profile
-CREATE POLICY "Users insert own profile" ON public.profiles
-  FOR INSERT WITH CHECK (auth.uid() = id);
-
--- Allow users to update their own profile
-CREATE POLICY "Users can update own profile" ON public.profiles
-  FOR UPDATE USING (auth.uid() = id);
-
--- Admins and staff full control over profiles (Uses SECURITY DEFINER function to prevent infinite loop)
-CREATE POLICY "Admins full control over profiles" ON public.profiles
-  FOR ALL USING (public.is_admin_or_staff());
+-- Admins and staff full control over profiles (Uses SECURITY DEFINER function to bypass RLS recursion)
+CREATE POLICY "Admins full control profiles" ON public.profiles
+  FOR ALL
+  TO authenticated
+  USING (public.is_admin_or_staff())
+  WITH CHECK (public.is_admin_or_staff());
 
 -- 7. Postgres Trigger Function for Automatic Signup Handling
 CREATE OR REPLACE FUNCTION public.handle_new_user_signup()
