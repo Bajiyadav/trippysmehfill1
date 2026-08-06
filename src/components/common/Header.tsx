@@ -7,12 +7,17 @@ import { SupportModal } from './SupportModal';
 import { UserRole } from '../../types';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 
-interface NotificationItem {
+interface OrderNotificationItem {
   id: string;
-  title: string;
-  message: string;
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  customerPhone: string;
+  totalAmount: number;
+  status: string;
+  deliveryAddress: string;
   time: string;
-  type: 'order' | 'driver' | 'user';
+  event: 'NEW_ORDER' | 'STATUS_CHANGE';
 }
 
 interface HeaderProps {
@@ -41,76 +46,86 @@ export const Header: React.FC<HeaderProps> = ({
   const [isSupportOpen, setIsSupportOpen] = useState(false);
   const [isMenuDropdownOpen, setIsMenuDropdownOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [orderNotifications, setOrderNotifications] = useState<OrderNotificationItem[]>([]);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !user || (user.role !== 'admin' && user.role !== 'staff')) return;
 
-    // Fetch initial notifications from live orders & profiles
-    const fetchLiveNotifications = async () => {
+    // 1. Fetch initial live orders from database table
+    const fetchLiveOrders = async () => {
       try {
         const { data: recentOrders } = await supabase
           .from('orders')
           .select('*')
           .order('created_at', { ascending: false })
-          .limit(5);
+          .limit(8);
 
-        const items: NotificationItem[] = [];
         if (recentOrders && recentOrders.length > 0) {
-          recentOrders.forEach((ord: any) => {
-            items.push({
-              id: 'notif-ord-' + ord.id,
-              title: `📦 Order ${ord.order_number || ord.id}`,
-              message: `${ord.customer_name || 'Customer'} • ₹${ord.total_amount || 0} (${ord.status || 'pending'})`,
-              time: ord.created_at ? new Date(ord.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
-              type: 'order'
-            });
-          });
+          const items: OrderNotificationItem[] = recentOrders.map((ord: any) => ({
+            id: 'ord-notif-' + ord.id,
+            orderId: ord.id,
+            orderNumber: ord.order_number || `#${ord.id.slice(0, 6)}`,
+            customerName: ord.customer_name || 'Customer',
+            customerPhone: ord.customer_phone || '',
+            totalAmount: ord.total_amount || 0,
+            status: ord.status || 'pending',
+            deliveryAddress: ord.delivery_address || 'Delivery Address',
+            time: ord.created_at ? new Date(ord.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
+            event: 'NEW_ORDER'
+          }));
+          setOrderNotifications(items);
+          setUnreadCount(items.filter(i => i.status === 'pending').length);
         }
-
-        setNotifications(items);
       } catch (err) {
-        console.error('Error loading initial notifications:', err);
+        console.error('Error fetching live order notifications:', err);
       }
     };
 
-    fetchLiveNotifications();
+    fetchLiveOrders();
 
-    // Subscribe to REAL-TIME postgres changes from Supabase
+    // 2. Listen to REAL-TIME live order inserts & updates from Supabase
     const channel = supabase
-      .channel('realtime-erp-notifications')
+      .channel('realtime-live-orders-channel')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'orders' },
         (payload) => {
           const newOrd = payload.new as any;
-          setNotifications((prev) => [
-            {
-              id: 'notif-ord-' + newOrd.id + '-' + Date.now(),
-              title: `📦 New Order ${newOrd.order_number || newOrd.id}`,
-              message: `${newOrd.customer_name || 'Customer'} • ₹${newOrd.total_amount || 0}`,
-              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              type: 'order'
-            },
-            ...prev.slice(0, 9)
-          ]);
+          const item: OrderNotificationItem = {
+            id: 'ord-notif-ins-' + newOrd.id + '-' + Date.now(),
+            orderId: newOrd.id,
+            orderNumber: newOrd.order_number || `#${newOrd.id.slice(0, 6)}`,
+            customerName: newOrd.customer_name || 'Customer',
+            customerPhone: newOrd.customer_phone || '',
+            totalAmount: newOrd.total_amount || 0,
+            status: newOrd.status || 'pending',
+            deliveryAddress: newOrd.delivery_address || '',
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            event: 'NEW_ORDER'
+          };
+          setOrderNotifications((prev) => [item, ...prev.slice(0, 9)]);
+          setUnreadCount((prev) => prev + 1);
         }
       )
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'profiles' },
+        { event: 'UPDATE', schema: 'public', table: 'orders' },
         (payload) => {
-          const newProf = payload.new as any;
-          setNotifications((prev) => [
-            {
-              id: 'notif-prof-' + newProf.id + '-' + Date.now(),
-              title: `👤 Customer Registered`,
-              message: `${newProf.full_name || newProf.email} (${newProf.phone || 'New Customer'})`,
-              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              type: 'user'
-            },
-            ...prev.slice(0, 9)
-          ]);
+          const updatedOrd = payload.new as any;
+          const item: OrderNotificationItem = {
+            id: 'ord-notif-upd-' + updatedOrd.id + '-' + Date.now(),
+            orderId: updatedOrd.id,
+            orderNumber: updatedOrd.order_number || `#${updatedOrd.id.slice(0, 6)}`,
+            customerName: updatedOrd.customer_name || 'Customer',
+            customerPhone: updatedOrd.customer_phone || '',
+            totalAmount: updatedOrd.total_amount || 0,
+            status: updatedOrd.status || 'pending',
+            deliveryAddress: updatedOrd.delivery_address || '',
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            event: 'STATUS_CHANGE'
+          };
+          setOrderNotifications((prev) => [item, ...prev.filter(i => i.orderId !== updatedOrd.id).slice(0, 8)]);
         }
       )
       .subscribe();
@@ -255,39 +270,78 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {/* Admin Live Notifications Bell Icon */}
-              {user?.role === 'admin' && (
+              {/* Admin Live Notifications Bell Icon (Live Orders Only) */}
+              {(user?.role === 'admin' || user?.role === 'staff') && (
                 <div className="relative">
                   <button
-                    onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-                    className="p-2.5 bg-[#181818] hover:bg-white/10 text-[#C5A059] rounded-xl border border-[#C5A059]/30 transition relative"
-                    title="Live ERP Notifications"
+                    onClick={() => {
+                      setIsNotificationsOpen(!isNotificationsOpen);
+                      setUnreadCount(0);
+                    }}
+                    className="p-2.5 bg-[#181818] hover:bg-white/10 text-[#C5A059] rounded-xl border border-[#C5A059]/30 transition relative flex items-center gap-1"
+                    title="Live Orders Realtime Center"
                   >
-                    <Bell className="w-4 h-4" />
-                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                    <Bell className="w-4 h-4 text-[#C5A059]" />
+                    {unreadCount > 0 && (
+                      <span className="bg-orange-600 text-white font-black text-[10px] px-1.5 py-0.2 rounded-full animate-pulse">
+                        {unreadCount}
+                      </span>
+                    )}
                   </button>
 
-                  {/* Notification Dropdown Panel */}
+                  {/* Live Order Notification Dropdown Panel */}
                   {isNotificationsOpen && (
-                    <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-[#121212] text-gray-200 rounded-2xl shadow-2xl border border-white/15 p-4 z-50 space-y-3">
+                    <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-[#121212] text-gray-200 rounded-2xl shadow-2xl border border-white/15 p-4 z-50 space-y-3">
                       <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                        <span className="font-extrabold text-white text-xs font-serif">Notification Center</span>
-                        <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-bold px-2 py-0.5 rounded-full">Live</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-extrabold text-white text-xs font-serif">Live Orders Center</span>
+                          <span className="text-[9px] bg-emerald-500/20 text-emerald-400 font-extrabold px-2 py-0.5 rounded-full border border-emerald-500/30 uppercase">
+                            Realtime Live
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-gray-500 font-mono">
+                          {orderNotifications.length} orders
+                        </span>
                       </div>
 
-                      <div className="space-y-2 text-xs max-h-72 overflow-y-auto">
-                        {notifications.length === 0 ? (
-                          <div className="p-4 text-center text-gray-500 text-xs font-medium">
-                            No live notifications yet.
+                      <div className="space-y-2 text-xs max-h-80 overflow-y-auto">
+                        {orderNotifications.length === 0 ? (
+                          <div className="p-5 text-center text-gray-500 text-xs font-medium">
+                            No live orders placed yet.
                           </div>
                         ) : (
-                          notifications.map((notif) => (
-                            <div key={notif.id} className="p-2.5 bg-[#181818] rounded-xl border border-white/5 space-y-0.5">
+                          orderNotifications.map((notif) => (
+                            <div
+                              key={notif.id}
+                              onClick={() => {
+                                setActiveSection('admin');
+                                setIsNotificationsOpen(false);
+                              }}
+                              className="p-3 bg-[#181818] hover:bg-white/5 rounded-xl border border-white/5 space-y-1 cursor-pointer transition"
+                            >
                               <div className="flex items-center justify-between">
-                                <p className="font-bold text-white text-xs">{notif.title}</p>
+                                <span className="font-extrabold text-orange-400 text-xs flex items-center gap-1">
+                                  {notif.event === 'NEW_ORDER' ? '📦' : '🛵'} {notif.orderNumber}
+                                </span>
                                 <span className="text-[10px] text-gray-500 font-mono">{notif.time}</span>
                               </div>
-                              <p className="text-[11px] text-gray-400 truncate">{notif.message}</p>
+
+                              <div className="flex items-center justify-between text-[11px] text-gray-300">
+                                <span className="font-bold truncate">{notif.customerName}</span>
+                                <span className="font-extrabold text-emerald-400">₹{notif.totalAmount}</span>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-1 text-[10px]">
+                                <span className="text-gray-400 truncate max-w-[200px]">{notif.deliveryAddress}</span>
+                                <span className={`px-2 py-0.5 rounded-md font-mono font-bold uppercase text-[9px] ${
+                                  notif.status === 'delivered' ? 'bg-emerald-500/20 text-emerald-400' :
+                                  notif.status === 'cooking' ? 'bg-amber-500/20 text-amber-400' :
+                                  notif.status === 'out_for_delivery' ? 'bg-blue-500/20 text-blue-400' :
+                                  'bg-orange-500/20 text-orange-400'
+                                }`}>
+                                  {notif.status}
+                                </span>
+                              </div>
                             </div>
                           ))
                         )}
