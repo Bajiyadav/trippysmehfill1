@@ -152,6 +152,20 @@ export async function sendPasswordResetOTP(email: string): Promise<SendOtpResult
   }
 
   try {
+    // Check if profile exists first to prevent 500 auth errors on non-existent accounts
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email')
+      .ilike('email', cleanEmail)
+      .maybeSingle();
+
+    if (!profile) {
+      return {
+        success: false,
+        message: `No account found for "${cleanEmail}". Please click "Create Account" to register.`
+      };
+    }
+
     const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
 
     if (error) {

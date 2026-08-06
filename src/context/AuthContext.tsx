@@ -283,6 +283,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         if (signUpData.user) {
           targetUserId = signUpData.user.id;
+          // Establish active session immediately
+          const { data: signInData } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password: data.password
+          });
+          if (signInData.session) {
+            setSession(signInData.session);
+          }
         }
       }
 
