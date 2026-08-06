@@ -236,7 +236,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     // Send Email Verification OTP to complete registration safely
-    const otpRes = await sendEmailVerificationOTP(cleanEmail, cleanName);
+    const otpRes = await sendEmailVerificationOTP(cleanEmail, cleanName, password);
     if (!otpRes.success) {
       setErrorMsg(otpRes.message);
       return;
@@ -249,7 +249,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleResendOtp = async () => {
     setErrorMsg('');
-    const result = await sendEmailVerificationOTP(email.trim().toLowerCase(), fullName.trim());
+    const result = await sendEmailVerificationOTP(email.trim().toLowerCase(), fullName.trim(), password);
     if (!result.success) {
       setErrorMsg(result.message);
       return;
