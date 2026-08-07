@@ -2,10 +2,45 @@ import { supabase } from '../../lib/supabase';
 import { Order, OrderItem, OrderStatus, PaymentMethod, PaymentStatus } from '../../types';
 
 /**
- * One place that turns an `orders` row (with its joined order_items) into an
- * Order. Previously this mapping was written out three times, so a column
- * added to one copy silently went missing from the others -- which is exactly
- * what would have happened to the Phase 3 verification columns.
+ * Line items live in the `orders.items` jsonb column.
+ *
+ * There is no `order_items` table on the production database and one must not
+ * be introduced: `orders.items` is the single source of truth, and a second
+ * home for the same data would let the two drift apart with no way to say which
+ * is right. See SCHEMA_ALIGNMENT_REPORT.md.
+ *
+ * Parsed defensively because jsonb is schemaless -- a row written by another
+ * client, or an older one, may be a JSON string rather than an array, or carry
+ * differently-named fields. A malformed value yields an empty item list rather
+ * than throwing, so one bad row cannot take down the whole order list.
+ */
+export function parseOrderItems(raw: any): OrderItem[] {
+  let value = raw;
+
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(value)) return [];
+
+  return value.map((item: any) => ({
+    dish_id: item?.dish_id ?? item?.id ?? '',
+    dish_name: item?.dish_name ?? item?.name ?? '',
+    quantity: Number(item?.quantity ?? 0),
+    price: Number(item?.price ?? 0),
+    is_veg: item?.is_veg ?? undefined,
+  }));
+}
+
+/**
+ * One place that turns an `orders` row into an Order. Previously this mapping
+ * was written out three times, so a column added to one copy silently went
+ * missing from the others -- which is exactly what would have happened to the
+ * Phase 3 verification columns.
  */
 function mapOrderRow(row: any): Order {
   return {
@@ -17,13 +52,7 @@ function mapOrderRow(row: any): Order {
     delivery_address: row.delivery_address,
     landmark: row.landmark || undefined,
     campus: row.campus || undefined,
-    items: (row.order_items || []).map((item: any) => ({
-      dish_id: item.dish_id || item.id,
-      dish_name: item.dish_name,
-      quantity: item.quantity,
-      price: Number(item.price),
-      is_veg: item.is_veg,
-    })),
+    items: parseOrderItems(row.items),
     subtotal: Number(row.subtotal),
     tax_amount: Number(row.tax_amount),
     delivery_fee: Number(row.delivery_fee),
@@ -49,8 +78,7 @@ export const ordersService = {
   async fetchOrders(): Promise<Order[]> {
     const { data: ordersData, error: ordersError } = await supabase
       .from('orders')
-      .select('*, order_items(*)')
-      .eq('is_deleted', false)
+      .select('*')
       .order('created_at', { ascending: false });
 
     if (ordersError) {
@@ -64,9 +92,8 @@ export const ordersService = {
   async fetchCustomerOrders(customerId: string): Promise<Order[]> {
     const { data: ordersData, error: ordersError } = await supabase
       .from('orders')
-      .select('*, order_items(*)')
+      .select('*')
       .eq('customer_id', customerId)
-      .eq('is_deleted', false)
       .order('created_at', { ascending: false });
 
     if (ordersError) {
@@ -77,7 +104,24 @@ export const ordersService = {
     return (ordersData || []).map(mapOrderRow);
   },
 
+  /**
+   * Creates the order in a single INSERT.
+   *
+   * Line items go into the `orders.items` jsonb column alongside the header,
+   * which removes a failure mode the previous two-step write had: an order row
+   * could be inserted and its items then fail, leaving the kitchen a ticket
+   * with nothing to cook. That is now impossible -- the row either exists
+   * complete, or it does not exist.
+   */
   async createOrder(orderInput: Omit<Order, 'id' | 'created_at'>): Promise<Order> {
+    const items: OrderItem[] = (orderInput.items || []).map((item) => ({
+      dish_id: item.dish_id,
+      dish_name: item.dish_name,
+      quantity: item.quantity,
+      price: item.price,
+      is_veg: item.is_veg ?? false,
+    }));
+
     const { data: insertedOrder, error: orderError } = await supabase
       .from('orders')
       .insert([
@@ -89,6 +133,7 @@ export const ordersService = {
           delivery_address: orderInput.delivery_address,
           landmark: orderInput.landmark || null,
           campus: orderInput.campus || null,
+          items,
           subtotal: orderInput.subtotal,
           tax_amount: orderInput.tax_amount,
           delivery_fee: orderInput.delivery_fee,
@@ -111,32 +156,10 @@ export const ordersService = {
       throw orderError;
     }
 
-    if (orderInput.items && orderInput.items.length > 0) {
-      const itemsPayload = orderInput.items.map((item) => ({
-        order_id: insertedOrder.id,
-        dish_id: item.dish_id && item.dish_id.length > 20 ? item.dish_id : null,
-        dish_name: item.dish_name,
-        quantity: item.quantity,
-        price: item.price,
-        is_veg: item.is_veg ?? false,
-      }));
-
-      const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
-      if (itemsError) {
-        // An order row with no line items is worse than no order at all: the
-        // kitchen sees a ticket with nothing to cook and the customer has been
-        // told it worked. Remove the header row and report the failure.
-        console.error('Error inserting order items:', itemsError);
-        await supabase.from('orders').delete().eq('id', insertedOrder.id);
-        throw itemsError;
-      }
-    }
-
-    return {
-      ...orderInput,
-      id: insertedOrder.id,
-      created_at: insertedOrder.created_at,
-    };
+    // The row that came back is authoritative -- it carries the database's own
+    // id, created_at and any column defaults, rather than what we hoped it
+    // would store.
+    return mapOrderRow(insertedOrder);
   },
 
   /**
@@ -195,7 +218,7 @@ export const ordersService = {
       .update({ payment_status: 'completed', payment_rejection_reason: null })
       .eq('id', orderId)
       .eq('payment_status', 'pending')
-      .select('*, order_items(*)');
+      .select('*');
 
     if (error) {
       console.error('Error verifying payment:', error);
@@ -228,7 +251,7 @@ export const ordersService = {
       })
       .eq('id', orderId)
       .eq('payment_status', 'pending')
-      .select('*, order_items(*)');
+      .select('*');
 
     if (error) {
       console.error('Error rejecting payment:', error);
@@ -273,7 +296,7 @@ export const ordersService = {
   async fetchOrderById(orderId: string): Promise<Order | null> {
     const { data, error } = await supabase
       .from('orders')
-      .select('*, order_items(*)')
+      .select('*')
       .eq('id', orderId)
       .maybeSingle();
 

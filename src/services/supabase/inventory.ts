@@ -6,7 +6,6 @@ export const inventoryService = {
     const { data, error } = await supabase
       .from('inventory')
       .select('*')
-      .eq('is_deleted', false)
       .order('item_name', { ascending: true });
 
     if (error) {
@@ -86,15 +85,21 @@ export const inventoryService = {
     };
   },
 
-  async deleteInventoryItem(id: string): Promise<void> {
-    const { error } = await supabase
-      .from('inventory')
-      .update({ is_deleted: true })
-      .eq('id', id);
-
-    if (error) {
-      console.error('Error deleting inventory item:', error);
-      throw error;
-    }
+  /**
+   * Not supported against the production schema.
+   *
+   * This used to soft-delete via an `is_deleted` column that does not exist on
+   * the production `inventory` table, so it has never actually worked. There is
+   * no other column to hide a row behind, and a hard DELETE is not an
+   * acceptable substitute -- inventory rows carry stock history.
+   *
+   * It refuses loudly rather than destroying data. Nothing in the UI calls it;
+   * giving it a real implementation is a schema decision, not a code one.
+   */
+  async deleteInventoryItem(_id: string): Promise<void> {
+    throw new Error(
+      'Deleting inventory items is not supported: the production schema has no ' +
+      'soft-delete column, and stock rows are not removed. Set the quantity to 0 instead.'
+    );
   },
 };

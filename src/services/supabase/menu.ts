@@ -6,7 +6,6 @@ export const menuService = {
     const { data, error } = await supabase
       .from('menu_items')
       .select('*')
-      .eq('is_deleted', false)
       .order('display_order', { ascending: true });
 
     if (error) {
@@ -107,14 +106,22 @@ export const menuService = {
     };
   },
 
+  /**
+   * Retires a dish by making it unavailable.
+   *
+   * The production schema has no `is_deleted` column, and the row is
+   * deliberately NOT deleted: past orders reference these dishes, so removing
+   * one would rewrite history. Setting `is_available = false` takes it off the
+   * menu while leaving every record intact.
+   */
   async deleteMenuItem(id: string): Promise<void> {
     const { error } = await supabase
       .from('menu_items')
-      .update({ is_deleted: true })
+      .update({ is_available: false })
       .eq('id', id);
 
     if (error) {
-      console.error('Error deleting menu item:', error);
+      console.error('Error retiring menu item:', error);
       throw error;
     }
   },
