@@ -6,8 +6,20 @@
 | Branch | `feat/supabase-auth-otp` · PR [#2](https://github.com/Bajiyadav/trippysmehfill1/pull/2) |
 | Supabase | `iptjevfvuwrdbqzgrzxg` |
 | Live site | `trippysmehfill.vercel.app` |
-| Validated | 2026-08-08 |
-| **Status** | 🟡 **READY AFTER EXTERNAL DEPLOYMENT STEPS** |
+| Validated | 2026-08-08 (updated after external-deployment attempt) |
+| **Status** | 🟡 **READY AFTER EXTERNAL ACTION** |
+
+> **Update — external deployment attempted, database access confirmed unavailable.**
+> Applying migrations requires credentials this environment does not have: only
+> the anon key is present, there is no `service_role` key, no database password,
+> no connection string, and no Supabase CLI. `POST /rpc/exec_sql` returns
+> `PGRST202` (no such function). Port 5432 is reachable but needs credentials.
+> **Blockers 1–3 remain and must be performed by a Database Admin.**
+>
+> Three further high-severity data-integrity bugs were found and fixed in that
+> session — fabricated dashboard analytics, fabricated seeded orders and
+> customers, and fabricated contact details on record creation. See
+> [CLIENT_DELIVERY_READINESS.md](CLIENT_DELIVERY_READINESS.md).
 
 ---
 
