@@ -14,6 +14,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ banners, onAddBanner
   const [formData, setFormData] = useState<KitchenSettings>({ ...settings });
   const [isSaved, setIsSaved] = useState(false);
 
+  // Sync formData when global settings updates (e.g. via Supabase Realtime)
+  React.useEffect(() => {
+    setFormData({ ...settings });
+  }, [settings]);
+
   // New banner states
   const [bannerTitle, setBannerTitle] = useState('');
   const [bannerPosterUrl, setBannerPosterUrl] = useState('');
@@ -21,15 +26,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ banners, onAddBanner
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateSettings(formData);
-
-    if (isSupabaseConfigured) {
-      try {
-        await supabase.from('kitchen_settings').upsert([formData]);
-      } catch (err) {
-        console.error('Failed to update kitchen settings in Supabase', err);
-      }
-    }
+    await updateSettings(formData);
 
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2000);
@@ -52,6 +49,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ banners, onAddBanner
     setBannerLink('');
   };
 
+  const inputStyle = "w-full p-2.5 bg-white border border-gray-300 rounded-xl text-[#111111] font-extrabold placeholder-gray-400 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 shadow-sm transition";
+
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-8">
       
@@ -60,7 +59,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ banners, onAddBanner
       </div>
 
       {/* Main Settings Form matching video frame 2:42 */}
-      <form onSubmit={handleSave} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-6">
+      <form onSubmit={handleSave} className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-6">
         
         {/* Restaurant Status ON/OFF */}
         <div className="flex items-center justify-between p-4 bg-orange-50/60 rounded-2xl border border-orange-200">
@@ -96,103 +95,113 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ banners, onAddBanner
         {/* Inputs Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
           <div>
-            <label className="font-bold text-gray-700 block mb-1">Opening time</label>
+            <label className="font-bold text-gray-800 block mb-1">Opening time</label>
             <input
               type="text"
               value={formData.opening_time}
               onChange={(e) => setFormData({ ...formData, opening_time: e.target.value })}
-              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+              placeholder="e.g. 09:00 AM"
+              className={inputStyle}
             />
           </div>
 
           <div>
-            <label className="font-bold text-gray-700 block mb-1">Closing time</label>
+            <label className="font-bold text-gray-800 block mb-1">Closing time</label>
             <input
               type="text"
               value={formData.closing_time}
               onChange={(e) => setFormData({ ...formData, closing_time: e.target.value })}
-              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+              placeholder="e.g. 10:00 PM"
+              className={inputStyle}
             />
           </div>
 
           <div>
-            <label className="font-bold text-gray-700 block mb-1">Minimum order value (₹)</label>
+            <label className="font-bold text-gray-800 block mb-1">Minimum order value (₹)</label>
             <input
               type="number"
               value={formData.min_order_value}
               onChange={(e) => setFormData({ ...formData, min_order_value: Number(e.target.value) })}
-              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+              placeholder="Minimum Order ₹"
+              className={inputStyle}
             />
           </div>
 
           <div>
-            <label className="font-bold text-gray-700 block mb-1">Free delivery above (₹)</label>
+            <label className="font-bold text-gray-800 block mb-1">Free delivery above (₹)</label>
             <input
               type="number"
               value={formData.free_delivery_above}
               onChange={(e) => setFormData({ ...formData, free_delivery_above: Number(e.target.value) })}
-              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+              placeholder="Free Delivery Threshold ₹"
+              className={inputStyle}
             />
           </div>
 
           <div>
-            <label className="font-bold text-gray-700 block mb-1">Delivery charge (₹)</label>
+            <label className="font-bold text-gray-800 block mb-1">Delivery charge (₹)</label>
             <input
               type="number"
               value={formData.delivery_charge}
               onChange={(e) => setFormData({ ...formData, delivery_charge: Number(e.target.value) })}
-              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+              placeholder="Delivery Fee ₹"
+              className={inputStyle}
             />
           </div>
 
           <div>
-            <label className="font-bold text-gray-700 block mb-1">Tax (%)</label>
+            <label className="font-bold text-gray-800 block mb-1">Tax (%)</label>
             <input
               type="number"
               value={formData.tax_percent}
               onChange={(e) => setFormData({ ...formData, tax_percent: Number(e.target.value) })}
-              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+              placeholder="Tax %"
+              className={inputStyle}
             />
           </div>
 
           <div>
-            <label className="font-bold text-gray-700 block mb-1">Estimated delivery (minutes)</label>
+            <label className="font-bold text-gray-800 block mb-1">Estimated delivery (minutes)</label>
             <input
               type="number"
               value={formData.estimated_delivery_mins}
               onChange={(e) => setFormData({ ...formData, estimated_delivery_mins: Number(e.target.value) })}
-              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+              placeholder="Estimated Mins"
+              className={inputStyle}
             />
           </div>
 
           <div>
-            <label className="font-bold text-gray-700 block mb-1">Restaurant UPI ID</label>
+            <label className="font-bold text-gray-800 block mb-1">Restaurant UPI ID</label>
             <input
               type="text"
               value={formData.restaurant_upi_id}
               onChange={(e) => setFormData({ ...formData, restaurant_upi_id: e.target.value })}
-              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none font-mono"
+              placeholder="e.g. 9876543210@ybl"
+              className={`${inputStyle} font-mono`}
             />
           </div>
 
           <div>
-            <label className="font-bold text-gray-700 block mb-1">WhatsApp number</label>
+            <label className="font-bold text-gray-800 block mb-1">WhatsApp number</label>
             <input
               type="text"
               value={formData.whatsapp_number}
               onChange={(e) => setFormData({ ...formData, whatsapp_number: e.target.value })}
-              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none font-mono"
+              placeholder="e.g. +91 98765 43210"
+              className={`${inputStyle} font-mono`}
             />
           </div>
         </div>
 
         <div>
-          <label className="font-bold text-gray-700 block mb-1 text-xs">Closed banner message</label>
+          <label className="font-bold text-gray-800 block mb-1 text-xs">Closed banner message</label>
           <input
             type="text"
             value={formData.closed_banner_message}
             onChange={(e) => setFormData({ ...formData, closed_banner_message: e.target.value })}
-            className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none text-xs"
+            placeholder="e.g. We are currently not accepting orders. Please visit us again during business hours."
+            className={inputStyle}
           />
         </div>
 

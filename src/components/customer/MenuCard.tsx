@@ -1,7 +1,7 @@
 import React from 'react';
 import { MenuItem } from '../../types';
 import { useCart } from '../../context/CartContext';
-import { Plus, Minus, Check } from 'lucide-react';
+import { Plus, Minus, Check, Lock } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 interface MenuCardProps {
@@ -10,10 +10,18 @@ interface MenuCardProps {
 }
 
 export const MenuCard: React.FC<MenuCardProps> = ({ item, onRequireAuth }) => {
-  const { cart, addToCart, updateQuantity } = useCart();
+  const { cart, addToCart, updateQuantity, settings } = useCart();
   const { user } = useAuth();
 
   const cartItem = cart.find(c => c.menuItem.id === item.id);
+
+  const handleAddClick = () => {
+    if (!settings.is_open) {
+      alert(`Restaurant is currently closed. Orders will resume at ${settings.opening_time || '09:00 AM'}.`);
+      return;
+    }
+    addToCart(item);
+  };
 
   return (
     <div className="bg-[#121212] rounded-2xl p-4 border border-white/10 shadow-lg hover:border-[#C5A059]/40 transition-all flex flex-col justify-between group">
@@ -68,6 +76,15 @@ export const MenuCard: React.FC<MenuCardProps> = ({ item, onRequireAuth }) => {
 
             {!item.is_available ? (
               <span className="text-xs text-gray-500 font-medium">Unavailable</span>
+            ) : !settings.is_open ? (
+              <button
+                onClick={handleAddClick}
+                className="bg-gray-800 text-gray-400 font-extrabold px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 border border-white/10 shadow-sm transition hover:bg-gray-700"
+                title={`Restaurant is currently closed. Orders will resume at ${settings.opening_time || '09:00 AM'}.`}
+              >
+                <Lock className="w-3.5 h-3.5 text-rose-400" />
+                <span>CLOSED</span>
+              </button>
             ) : cartItem ? (
               <div className="flex items-center gap-2 bg-[#181818] border border-white/10 rounded-xl px-2 py-1">
                 <button
@@ -88,7 +105,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({ item, onRequireAuth }) => {
               </div>
             ) : (
               <button
-                onClick={() => addToCart(item)}
+                onClick={handleAddClick}
                 className="bg-[#C5A059] hover:bg-[#b38f48] active:scale-95 text-black font-extrabold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition"
               >
                 <Plus className="w-3.5 h-3.5" />

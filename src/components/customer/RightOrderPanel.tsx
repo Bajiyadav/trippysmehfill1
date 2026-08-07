@@ -49,6 +49,11 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
   const handlePlaceOrder = async () => {
     setErrorMsg('');
 
+    if (!settings.is_open) {
+      setErrorMsg(`Restaurant is currently closed. Orders will resume at ${settings.opening_time || '09:00 AM'}.`);
+      return;
+    }
+
     if (!user) {
       onRequireAuth();
       return;
@@ -458,10 +463,16 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
           ) : (
             <button
               onClick={handlePlaceOrder}
-              disabled={isPlacing || !isMinOrderMet}
-              className="w-full py-3 bg-[#C5A059] hover:bg-[#b38f48] active:scale-[0.99] text-black font-extrabold rounded-xl shadow-lg shadow-[#C5A059]/20 flex items-center justify-center gap-2 transition text-xs sm:text-sm disabled:opacity-50"
+              disabled={isPlacing || !isMinOrderMet || !settings.is_open}
+              className={`w-full py-3 font-extrabold rounded-xl shadow-lg flex items-center justify-center gap-2 transition text-xs sm:text-sm ${
+                !settings.is_open
+                  ? 'bg-rose-950 text-rose-300 border border-rose-500/40 cursor-not-allowed opacity-90'
+                  : 'bg-[#C5A059] hover:bg-[#b38f48] active:scale-[0.99] text-black shadow-[#C5A059]/20 disabled:opacity-50'
+              }`}
             >
-              {isPlacing ? (
+              {!settings.is_open ? (
+                <span>🔴 Restaurant Closed (Resumes at {settings.opening_time || '09:00 AM'})</span>
+              ) : isPlacing ? (
                 <span>Sending to Kitchen...</span>
               ) : (
                 <>

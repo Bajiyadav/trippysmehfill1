@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CartItem, MenuItem, KitchenSettings } from '../types';
 import { initialKitchenSettings } from '../lib/initialData';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface CartContextType {
   cart: CartItem[];
@@ -14,7 +15,7 @@ interface CartContextType {
   taxAmount: number;
   grandTotal: number;
   settings: KitchenSettings;
-  updateSettings: (newSettings: Partial<KitchenSettings>) => void;
+  updateSettings: (newSettings: Partial<KitchenSettings>) => Promise<void>;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
@@ -43,6 +44,50 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     localStorage.setItem('trippys_settings', JSON.stringify(settings));
   }, [settings]);
+
+  // Load latest global restaurant settings from Supabase & subscribe to Realtime updates
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    async function loadKitchenSettings() {
+      try {
+        const { data, error } = await supabase
+          .from('kitchen_settings')
+          .select('*')
+          .eq('id', 1)
+          .single();
+
+        if (!error && data) {
+          console.log('[CartContext] Loaded global kitchen settings from Supabase:', data);
+          setSettings(prev => ({ ...prev, ...data }));
+        }
+      } catch (err) {
+        console.error('[CartContext] Error loading kitchen settings:', err);
+      }
+    }
+
+    loadKitchenSettings();
+
+    // Supabase Realtime channel for global settings sync
+    const channel = supabase
+      .channel('public:kitchen_settings:realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'kitchen_settings' },
+        (payload) => {
+          console.log('[Realtime Settings] Global setting update received:', payload);
+          if (payload.new) {
+            const updated = payload.new as KitchenSettings;
+            setSettings(prev => ({ ...prev, ...updated }));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const addToCart = (menuItem: MenuItem) => {
     setCart(prev => {
@@ -78,8 +123,22 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearCart = () => setCart([]);
 
-  const updateSettings = (newSettings: Partial<KitchenSettings>) => {
-    setSettings(prev => ({ ...prev, ...newSettings }));
+  const updateSettings = async (newSettings: Partial<KitchenSettings>) => {
+    const merged = { ...settings, ...newSettings, id: 1 };
+    setSettings(merged);
+    if (isSupabaseConfigured) {
+      try {
+        const { error } = await supabase
+          .from('kitchen_settings')
+          .upsert([merged]);
+
+        if (error) {
+          console.error('[CartContext] Failed to upsert kitchen_settings to Supabase:', error.message);
+        }
+      } catch (err) {
+        console.error('[CartContext] Error upserting kitchen settings:', err);
+      }
+    }
   };
 
   const totalCount = cart.reduce((sum, item) => sum + item.quantity, 0);

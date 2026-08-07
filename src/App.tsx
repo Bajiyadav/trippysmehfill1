@@ -36,6 +36,8 @@ import { GallerySection } from './components/customer/GallerySection';
 import { OffersSection } from './components/customer/OffersSection';
 import { RightOrderPanel } from './components/customer/RightOrderPanel';
 import { AdminGuardView } from './components/admin/AdminGuardView';
+import { ClosedHomepageBanner } from './components/customer/ClosedHomepageBanner';
+import { ClosedRestaurantModal } from './components/customer/ClosedRestaurantModal';
 
 // Driver Component
 import { DriverView } from './components/driver/DriverView';
@@ -57,10 +59,23 @@ import { playKitchenAlertSound } from './lib/sound';
 
 function MainApp() {
   const { user } = useAuth();
+  const { settings } = useCart();
   
   // Navigation & Tabs
   const [activeSection, setActiveSection] = useState<'menu' | 'track' | 'admin' | 'kitchen' | 'driver'>('menu');
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
+
+  // Closed restaurant modal state
+  const [isClosedModalOpen, setIsClosedModalOpen] = useState(false);
+
+  // Auto-open closed restaurant modal whenever settings.is_open transitions to false
+  useEffect(() => {
+    if (!settings.is_open) {
+      setIsClosedModalOpen(true);
+    } else {
+      setIsClosedModalOpen(false);
+    }
+  }, [settings.is_open]);
 
   // Customer View Filters
   const [selectedCategory, setSelectedCategory] = useState<FoodCategory>('All');
@@ -365,6 +380,12 @@ function MainApp() {
         }}
       />
 
+      {/* Global Blue Homepage Banner when Restaurant is CLOSED */}
+      <ClosedHomepageBanner
+        settings={settings}
+        onOpenClosedModal={() => setIsClosedModalOpen(true)}
+      />
+
       {/* Admin ERP Sub-Navigation Header */}
       {activeSection === 'admin' && user?.role === 'admin' && (
         <AdminHeaderNav
@@ -625,6 +646,13 @@ function MainApp() {
         defaultTab={authModalTab}
         onClose={() => setIsAuthModalOpen(false)}
         onRegisterSuccess={(newCustomer) => setCustomersList(prev => [newCustomer, ...prev])}
+      />
+
+      {/* Global Fullscreen Closed Restaurant Popup Modal */}
+      <ClosedRestaurantModal
+        isOpen={isClosedModalOpen}
+        onClose={() => setIsClosedModalOpen(false)}
+        settings={settings}
       />
 
       {/* Footer */}
