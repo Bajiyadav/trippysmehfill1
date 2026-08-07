@@ -1,10 +1,19 @@
 import { supabase } from '../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
+/**
+ * Channel topics must be unique per open subscription. removeChannel() resolves
+ * asynchronously, so a re-subscribe (on sign-in, say) can briefly overlap the
+ * teardown of the previous one -- reusing a fixed topic makes the new channel
+ * collide with the dying one and silently receive nothing.
+ */
+let channelSequence = 0;
+const uniqueTopic = (prefix: string) => `${prefix}_${++channelSequence}`;
+
 export const realtimeService = {
   subscribeToOrders(onUpdate: (payload: any) => void): RealtimeChannel {
     const channel = supabase
-      .channel('orders_realtime_channel')
+      .channel(uniqueTopic('orders_realtime'))
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders' },
@@ -19,7 +28,7 @@ export const realtimeService = {
 
   subscribeToInventory(onUpdate: (payload: any) => void): RealtimeChannel {
     const channel = supabase
-      .channel('inventory_realtime_channel')
+      .channel(uniqueTopic('inventory_realtime'))
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'inventory' },

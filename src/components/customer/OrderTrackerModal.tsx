@@ -11,8 +11,8 @@ interface OrderTrackerModalProps {
 
 const statusSteps: { key: OrderStatus; label: string; icon: React.ReactNode }[] = [
   { key: 'pending', label: 'Order Placed', icon: <Clock className="w-4 h-4" /> },
-  { key: 'cooking', label: 'Cooking in Kitchen', icon: <CookingPot className="w-4 h-4" /> },
-  { key: 'out_for_delivery', label: 'Out for Delivery', icon: <Bike className="w-4 h-4" /> },
+  { key: 'preparing', label: 'Preparing in Kitchen', icon: <CookingPot className="w-4 h-4" /> },
+  { key: 'ready', label: 'Ready & On the Way', icon: <Bike className="w-4 h-4" /> },
   { key: 'delivered', label: 'Delivered', icon: <CheckCircle2 className="w-4 h-4" /> }
 ];
 
@@ -24,11 +24,17 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
 }) => {
   if (!isOpen || !order) return null;
 
+  // Maps both status vocabularies onto the four steps the customer sees. The
+  // legacy values on the right are still written by the admin, kitchen and
+  // driver screens, so tracking has to read them until those move over.
   const getStepIndex = (status: OrderStatus) => {
     switch (status) {
       case 'pending': return 0;
+      case 'accepted': return 0;
+      case 'preparing': return 1;
       case 'cooking': return 1;
       case 'assigned': return 1;
+      case 'ready': return 2;
       case 'out_for_delivery': return 2;
       case 'delivered': return 3;
       case 'cancelled': return -1;

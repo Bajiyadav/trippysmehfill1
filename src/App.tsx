@@ -34,6 +34,7 @@ import { SettingsView } from './components/admin/SettingsView';
 import { GallerySection } from './components/customer/GallerySection';
 import { OffersSection } from './components/customer/OffersSection';
 import { RightOrderPanel } from './components/customer/RightOrderPanel';
+import { CheckoutView } from './components/customer/CheckoutView';
 import { AdminGuardView } from './components/admin/AdminGuardView';
 
 // Driver Component
@@ -64,9 +65,11 @@ import {
 
 function MainApp() {
   const { user } = useAuth();
+  const { cart } = useCart();
+  const cartItemCount = cart.length;
   
   // Navigation & Tabs
-  const [activeSection, setActiveSection] = useState<'menu' | 'track' | 'admin' | 'kitchen' | 'driver'>('menu');
+  const [activeSection, setActiveSection] = useState<'menu' | 'checkout' | 'track' | 'admin' | 'kitchen' | 'driver'>('menu');
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
 
   // Customer View Filters
@@ -140,7 +143,13 @@ function MainApp() {
     loadAllSupabaseData();
   }, []);
 
-  // Realtime Postgres Subscriptions for Live ERP Order & Inventory Queue Updates
+  // Realtime Postgres Subscriptions for Live ERP Order & Inventory Queue Updates.
+  //
+  // Keyed on the signed-in identity, not [] -- postgres_changes events are
+  // filtered by RLS against the token the socket joined with, so a channel
+  // opened while anonymous stays anonymous. An admin signing in after mount
+  // would have received nothing on it. Re-joining on identity change gives each
+  // role a channel that can actually see its rows.
   useEffect(() => {
     if (!isSupabaseConfigured) return;
 
@@ -160,7 +169,18 @@ function MainApp() {
       realtimeService.unsubscribe(ordersChannel);
       realtimeService.unsubscribe(inventoryChannel);
     };
-  }, []);
+  }, [user?.id]);
+
+  // Live tracking: the tracker holds the order it was opened with, which would
+  // otherwise stay frozen at the status it had at that moment. Re-read it from
+  // the realtime-updated list so the customer watches it progress.
+  useEffect(() => {
+    if (!activeTrackingOrder) return;
+    const fresh = orders.find(o => o.id === activeTrackingOrder.id);
+    if (fresh && fresh.status !== activeTrackingOrder.status) {
+      setActiveTrackingOrder(fresh);
+    }
+  }, [orders, activeTrackingOrder]);
 
   // The mount-time load runs before anyone has signed in, so the admin-only
   // rows (orders, profiles) come back empty under RLS. Re-load once a session
@@ -185,6 +205,19 @@ function MainApp() {
       setActiveSection('admin');
     }
   }, [user]);
+
+  // Where a customer lands after signing in. Coming from the cart they should
+  // resume checkout rather than be dropped back on the menu to find it again;
+  // signing up with nothing in the cart has no checkout to resume.
+  const routeAfterAuth = () => {
+    if (cartItemCount > 0) {
+      setActiveSection('checkout');
+    } else {
+      setActiveSection('menu');
+    }
+    setIsAuthModalOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   // Logo Click Handler
   const handleLogoClick = () => {
@@ -220,9 +253,12 @@ function MainApp() {
   };
 
   // Handlers wired to Supabase Data Layer
+  // Optimistic local insert so the order shows up immediately for the customer
+  // who placed it. Every other client -- admin, kitchen -- gets it from the
+  // realtime subscription instead. The checkout page owns the confirmation
+  // screen, so the tracker is no longer forced open here.
   const handleOrderPlaced = (newOrder: Order) => {
-    setOrders(prev => [newOrder, ...prev]);
-    setActiveTrackingOrder(newOrder);
+    setOrders(prev => (prev.some(o => o.id === newOrder.id) ? prev : [newOrder, ...prev]));
   };
 
   const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus, driverId?: string, driverName?: string, driverPhone?: string) => {
@@ -431,18 +467,33 @@ function MainApp() {
               {/* Right Column: Sticky Live Order Summary & Checkout Panel */}
               <div className="hidden lg:block lg:col-span-5 xl:col-span-4">
                 <RightOrderPanel
-                  onOrderSuccess={handleOrderPlaced}
                   onRequireAuth={() => {
                     setAuthModalTab('signin');
                     setIsAuthModalOpen(true);
                   }}
-                  existingOrders={orders}
+                  onProceedToCheckout={() => {
+                    setActiveSection('checkout');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
                 />
               </div>
 
             </div>
           </div>
         </main>
+      )}
+
+      {/* 1b. CHECKOUT (signed-in customers only) */}
+      {activeSection === 'checkout' && user && (
+        <CheckoutView
+          existingOrders={orders}
+          onOrderPlaced={handleOrderPlaced}
+          onTrackOrder={(order) => setActiveTrackingOrder(order)}
+          onBackToMenu={() => {
+            setActiveSection('menu');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        />
       )}
 
       {/* 2. ADMIN ERP MODULE (STRICTLY ADMIN ONLY) */}
@@ -547,13 +598,15 @@ function MainApp() {
       {/* GLOBAL MODALS */}
       <CartDrawer
         isOpen={isCartOpen}
-        existingOrders={orders}
         onClose={() => setIsCartOpen(false)}
         onRequireAuth={() => {
           setAuthModalTab('signin');
           setIsAuthModalOpen(true);
         }}
-        onOrderSuccess={handleOrderPlaced}
+        onProceedToCheckout={() => {
+          setActiveSection('checkout');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
       />
 
       <OrderTrackerModal
@@ -590,11 +643,7 @@ function MainApp() {
         onClose={() => setIsAuthModalOpen(false)}
         onRegisterSuccess={(newCustomer) => {
           setCustomersList(prev => [newCustomer, ...prev]);
-          // OTP verification signs the customer in, so send them straight to
-          // the food menu instead of leaving them wherever they opened it from.
-          setActiveSection('menu');
-          setIsAuthModalOpen(false);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          routeAfterAuth();
         }}
       />
 

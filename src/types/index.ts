@@ -61,7 +61,27 @@ export interface MenuItem {
   created_at?: string;
 }
 
-export type OrderStatus = 'pending' | 'cooking' | 'assigned' | 'out_for_delivery' | 'delivered' | 'cancelled';
+/**
+ * Order lifecycle.
+ *
+ * The Phase 2 vocabulary is pending -> accepted -> preparing -> ready ->
+ * delivered, with cancelled available throughout. The older 'cooking',
+ * 'assigned' and 'out_for_delivery' values are retained rather than renamed
+ * because the admin, kitchen and driver screens still write them and those
+ * screens are out of scope for this phase; every customer-facing surface
+ * understands both sets. See PHASE2_ORDER_REPORT.md.
+ */
+export type OrderStatus =
+  | 'pending'
+  | 'accepted'
+  | 'preparing'
+  | 'ready'
+  | 'delivered'
+  | 'cancelled'
+  // Legacy values still emitted by admin / kitchen / driver.
+  | 'cooking'
+  | 'assigned'
+  | 'out_for_delivery';
 export type PaymentMethod = 'COD' | 'UPI' | 'Card' | 'Razorpay';
 export type PaymentStatus = 'pending' | 'completed' | 'failed' | 'refunded';
 

@@ -141,7 +141,12 @@ export const ordersService = {
 
       const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
       if (itemsError) {
+        // An order row with no line items is worse than no order at all: the
+        // kitchen sees a ticket with nothing to cook and the customer has been
+        // told it worked. Remove the header row and report the failure.
         console.error('Error inserting order items:', itemsError);
+        await supabase.from('orders').delete().eq('id', insertedOrder.id);
+        throw itemsError;
       }
     }
 
@@ -149,6 +154,80 @@ export const ordersService = {
       ...orderInput,
       id: insertedOrder.id,
       created_at: insertedOrder.created_at,
+    };
+  },
+
+  /**
+   * Records the customer's claim that a UPI transfer was made.
+   *
+   * This is a claim, not a verified settlement -- nothing here talks to a
+   * payment gateway, so it must never be called with 'completed' on the
+   * strength of the customer pressing a button.
+   */
+  async updatePaymentStatus(
+    orderId: string,
+    paymentStatus: PaymentStatus,
+    upiTransactionId?: string
+  ): Promise<void> {
+    const { error } = await supabase
+      .from('orders')
+      .update({
+        payment_status: paymentStatus,
+        ...(upiTransactionId ? { upi_transaction_id: upiTransactionId } : {}),
+      })
+      .eq('id', orderId);
+
+    if (error) {
+      console.error('Error updating payment status:', error);
+      throw error;
+    }
+  },
+
+  /** Single order by id, used by live tracking to poll a fresh status. */
+  async fetchOrderById(orderId: string): Promise<Order | null> {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*, order_items(*)')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching order:', error);
+      throw error;
+    }
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      order_number: data.order_number,
+      customer_id: data.customer_id,
+      customer_name: data.customer_name,
+      customer_phone: data.customer_phone,
+      delivery_address: data.delivery_address,
+      landmark: data.landmark || undefined,
+      campus: data.campus || undefined,
+      items: (data.order_items || []).map((item: any) => ({
+        dish_id: item.dish_id || item.id,
+        dish_name: item.dish_name,
+        quantity: item.quantity,
+        price: Number(item.price),
+        is_veg: item.is_veg,
+      })),
+      subtotal: Number(data.subtotal),
+      tax_amount: Number(data.tax_amount),
+      delivery_fee: Number(data.delivery_fee),
+      total_amount: Number(data.total_amount),
+      payment_method: data.payment_method as PaymentMethod,
+      payment_status: data.payment_status as PaymentStatus,
+      upi_transaction_id: data.upi_transaction_id || undefined,
+      status: data.status as OrderStatus,
+      driver_id: data.driver_id || undefined,
+      driver_name: data.driver_name || undefined,
+      driver_phone: data.driver_phone || undefined,
+      kitchen_notes: data.kitchen_notes || undefined,
+      rating: data.rating || undefined,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
     };
   },
 
