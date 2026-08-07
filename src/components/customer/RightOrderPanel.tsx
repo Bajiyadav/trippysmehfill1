@@ -27,7 +27,9 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
   const { cart, updateQuantity, removeFromCart, clearCart, subtotal, deliveryFee, taxAmount, grandTotal, settings } = useCart();
   const { user } = useAuth();
 
-  const [deliveryAddress, setDeliveryAddress] = useState(user?.hostel_address || 'Main Campus Hostel, Block B Room 204');
+  // Falls back to empty, never to a sample address -- a prefilled placeholder
+  // reads as a real saved address and gets submitted unchanged.
+  const [deliveryAddress, setDeliveryAddress] = useState(user?.hostel_address || '');
   const [landmark, setLandmark] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('COD');
   const [upiTxnId, setUpiTxnId] = useState('');

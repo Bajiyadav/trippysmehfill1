@@ -13,7 +13,6 @@ import { CustomerFeedbackModal } from './components/customer/CustomerFeedbackMod
 import { CustomerDashboardModal } from './components/customer/CustomerDashboardModal';
 import { AuthModal } from './components/common/AuthModal';
 import { ConfigErrorScreen, RequireRole } from './components/common/ProtectedRoute';
-import { WhatsAppVerificationGate } from './components/common/WhatsAppVerificationGate';
 
 // Admin Components
 import { AdminHeaderNav, AdminTab } from './components/admin/AdminHeaderNav';
@@ -589,7 +588,14 @@ function MainApp() {
         isOpen={isAuthModalOpen}
         defaultTab={authModalTab}
         onClose={() => setIsAuthModalOpen(false)}
-        onRegisterSuccess={(newCustomer) => setCustomersList(prev => [newCustomer, ...prev])}
+        onRegisterSuccess={(newCustomer) => {
+          setCustomersList(prev => [newCustomer, ...prev]);
+          // OTP verification signs the customer in, so send them straight to
+          // the food menu instead of leaving them wherever they opened it from.
+          setActiveSection('menu');
+          setIsAuthModalOpen(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
       />
 
       {/* Footer */}

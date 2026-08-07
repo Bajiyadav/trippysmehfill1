@@ -56,8 +56,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
   const [distanceFromKitchen, setDistanceFromKitchen] = useState<number>(0);
-  const [ipAddress, setIpAddress] = useState<string>('103.211.14.82');
-  const [locationCity, setLocationCity] = useState<string>('Sohna GLS Homes near GDGU, Haryana');
+  // Start empty -- these are filled from the real capture, never seeded with a
+  // sample address that would otherwise be written to a customer's profile.
+  const [ipAddress, setIpAddress] = useState<string>('');
+  const [locationCity, setLocationCity] = useState<string>('');
 
   // Email OTP state. The code itself lives on the server -- the browser only
   // ever holds what the user typed in.
@@ -84,6 +86,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   }, [resendTimer > 0]);
 
   if (!isOpen) return null;
+
+  // Phone fields hold exactly ten digits and nothing else. Filtering on the way
+  // in means letters, spaces, +91 prefixes and an eleventh digit never land in
+  // state at all, so what is submitted is always what the field displays.
+  const PHONE_LENGTH = 10;
+  const toPhoneDigits = (raw: string) => raw.replace(/\D/g, '').slice(0, PHONE_LENGTH);
+
+  /** Live, per-keystroke message. Empty string means "nothing to complain about yet". */
+  const phoneFieldError = (value: string): string => {
+    if (!value) return '';
+    if (value.length < PHONE_LENGTH) {
+      return `Mobile number must be exactly ${PHONE_LENGTH} digits.`;
+    }
+    const check = validatePhone(value);
+    return check.valid ? '' : check.message;
+  };
 
   // Real-Time Hardware Geolocation (Radius restriction removed - open service)
   const captureSecurityDetails = async (): Promise<{ lat: number; lng: number; ip: string; isOK: boolean }> => {
@@ -158,8 +176,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setTimeout(() => {
       setForgotStep('none');
       setActiveTab('signin');
-      setSignInIdentifier(forgotEmail.trim());
-      setSignInPassword(forgotNewPassword);
+      // The sign-in form is left empty on purpose -- nothing about the customer
+      // is carried across, not even the address they just typed.
+      setSignInIdentifier('');
+      setSignInPassword('');
       setEnteredOtp('');
     }, 1500);
   };
@@ -308,7 +328,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       hostel_address: hostelAddress.trim(),
       role: 'customer',
       account_status: 'active',
-      is_whatsapp_verified: true, // Auto-verified for instant ordering
       is_approved: true, // Auto-approved for instant ordering
       is_active: true,
       auth_provider: 'Email',
@@ -323,20 +342,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onRegisterSuccess(newCustomer);
     }
 
-    setInfoMsg(created.message || 'Email verified and account created successfully!');
-    setTimeout(() => {
-      onClose();
-    }, 1200);
+    // verifyOtp already established the session, so the customer is signed in by
+    // this point. Close straight away and let them land on the menu rather than
+    // holding them on a success screen.
+    onClose();
   };
 
   const handleStartGoogleSignInFlow = () => {
     setErrorMsg('');
     setInfoMsg('');
-    const prefillEmail = email.trim() || (signInIdentifier.includes('@') ? signInIdentifier.trim() : '');
-    setGoogleEmailInput(prefillEmail);
-    if (fullName) setGoogleFullName(fullName);
-    if (phone) setGooglePhone(phone);
-    if (hostelAddress) setGoogleAddress(hostelAddress);
+    // Nothing is carried over from the other tabs -- the customer types their
+    // own details here rather than inheriting whatever was left in a form.
+    setGoogleEmailInput('');
+    setGoogleFullName('');
+    setGooglePhone('');
+    setGoogleAddress('');
     setEnteredOtp('');
     setIsGoogleOtpSent(false);
     setRegStep('google_verify');
@@ -386,7 +406,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     }
 
-    const result = await sendEmailVerificationOTP(cleanEmail, cleanName || 'Google Customer');
+    const result = await sendEmailVerificationOTP(cleanEmail, cleanName);
     if (!result.success) {
       setErrorMsg(result.message);
       return;
@@ -412,9 +432,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      const cleanName = googleFullName.trim() || 'Google Customer';
-      const cleanPhone = googlePhone.trim() || '9876543210';
-      const cleanAddress = googleAddress.trim() || 'Campus Hostel Block A';
+      // These passed validateFullName/validatePhone/validateAddress before the
+      // code was sent, so they are the customer's own details -- no fallbacks.
+      const cleanName = googleFullName.trim();
+      const cleanPhone = googlePhone.trim();
+      const cleanAddress = googleAddress.trim();
 
       await signInWithGoogle(
         cleanEmail,
@@ -422,8 +444,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         cleanPhone,
         cleanAddress,
         ipAddress,
-        latitude || 17.3850,
-        longitude || 78.4867
+        latitude || KITCHEN_LAT,
+        longitude || KITCHEN_LNG
       );
 
       const newGoogleCustomer: UserProfile = {
@@ -437,8 +459,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         is_active: true,
         auth_provider: 'Google',
         ip_address: ipAddress,
-        latitude: latitude || 17.3850,
-        longitude: longitude || 78.4867,
+        latitude: latitude || KITCHEN_LAT,
+        longitude: longitude || KITCHEN_LNG,
         location_city: locationCity,
         created_at: new Date().toLocaleString()
       };
@@ -447,10 +469,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onRegisterSuccess(newGoogleCustomer);
       }
 
-      setInfoMsg(`Verified & Signed in with Google as ${cleanEmail}!`);
-      setTimeout(() => {
-        onClose();
-      }, 800);
+      // Signed in already -- go straight to the menu.
+      onClose();
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to authenticate Google user.');
     } finally {
@@ -592,7 +612,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         value={googleFullName}
                         onChange={(e) => setGoogleFullName(e.target.value)}
                         required
-                        placeholder="e.g. Naga Pavan"
+                        placeholder="Enter your full name"
                         className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
                       />
                     </div>
@@ -606,13 +626,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       <Phone className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input
                         type="tel"
+                        inputMode="numeric"
+                        maxLength={PHONE_LENGTH}
                         value={googlePhone}
-                        onChange={(e) => setGooglePhone(e.target.value)}
+                        onChange={(e) => setGooglePhone(toPhoneDigits(e.target.value))}
                         required
-                        placeholder="e.g. 9876543210"
-                        className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        aria-invalid={!!phoneFieldError(googlePhone) || undefined}
+                        placeholder="10-digit mobile number"
+                        className={`w-full pl-9 pr-3 py-2.5 bg-[#181818] border rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none ${
+                          phoneFieldError(googlePhone)
+                            ? 'border-red-500/60 focus:border-red-500'
+                            : 'border-white/10 focus:border-blue-500'
+                        }`}
                       />
                     </div>
+                    {phoneFieldError(googlePhone) && (
+                      <p className="text-[11px] text-red-400 mt-1">{phoneFieldError(googlePhone)}</p>
+                    )}
                   </div>
 
                   <div>
@@ -626,7 +656,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         value={googleAddress}
                         onChange={(e) => setGoogleAddress(e.target.value)}
                         required
-                        placeholder="e.g. Block A, Room 104"
+                        placeholder="Enter your delivery address"
                         className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
                       />
                     </div>
@@ -643,7 +673,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         value={googleEmailInput}
                         onChange={(e) => setGoogleEmailInput(e.target.value)}
                         required
-                        placeholder="e.g. nagapavankumarjavisetty@gmail.com"
+                        placeholder="Enter your email"
                         className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
                       />
                     </div>
@@ -755,7 +785,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={forgotEmail}
                     onChange={(e) => setForgotEmail(e.target.value)}
                     required
-                    placeholder="name@example.com"
+                    placeholder="Enter your email"
                     className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
@@ -827,7 +857,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={forgotNewPassword}
                     onChange={(e) => setForgotNewPassword(e.target.value)}
                     required
-                    placeholder="Min 6 characters"
+                    placeholder="Enter your password"
                     className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
@@ -844,7 +874,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={forgotConfirmPassword}
                     onChange={(e) => setForgotConfirmPassword(e.target.value)}
                     required
-                    placeholder="Re-enter new password"
+                    placeholder="Re-enter your password"
                     className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
@@ -891,7 +921,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={signInIdentifier}
                     onChange={(e) => setSignInIdentifier(e.target.value)}
                     required
-                    placeholder="Enter phone or email (e.g. 9876543210)"
+                    placeholder="Enter your phone or email"
                     className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
@@ -966,7 +996,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     required
-                    placeholder="e.g. Naga Pavan Kumar"
+                    placeholder="Enter your full name"
                     className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
@@ -978,13 +1008,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <Phone className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="tel"
+                    inputMode="numeric"
+                    maxLength={PHONE_LENGTH}
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => setPhone(toPhoneDigits(e.target.value))}
                     required
+                    aria-invalid={!!phoneFieldError(phone) || undefined}
                     placeholder="10-digit mobile number"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className={`w-full pl-9 pr-3 py-2.5 bg-[#181818] border rounded-xl text-xs text-white placeholder-gray-500 outline-none ${
+                      phoneFieldError(phone)
+                        ? 'border-red-500/60 focus:border-red-500'
+                        : 'border-white/10 focus:border-orange-500'
+                    }`}
                   />
                 </div>
+                {phoneFieldError(phone) && (
+                  <p className="text-[11px] text-red-400 mt-1">{phoneFieldError(phone)}</p>
+                )}
               </div>
 
               <div>
@@ -996,7 +1036,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
-                    placeholder="name@example.com"
+                    placeholder="Enter your email"
                     className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
@@ -1011,7 +1051,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={hostelAddress}
                     onChange={(e) => setHostelAddress(e.target.value)}
                     required
-                    placeholder="Hostel Gate / Room Number"
+                    placeholder="Enter your delivery address"
                     className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
@@ -1026,7 +1066,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    placeholder="Min 6 characters"
+                    placeholder="Enter your password"
                     className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
