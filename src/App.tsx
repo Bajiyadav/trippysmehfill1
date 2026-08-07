@@ -449,6 +449,7 @@ function MainApp() {
                 {/* Today's Specials */}
                 {!searchQuery && selectedCategory === 'All' && (
                   <TodaysSpecials
+                    items={todaysSpecials}
                     specials={todaysSpecials}
                     onRequireAuth={() => {
                       setAuthModalTab('signin');
