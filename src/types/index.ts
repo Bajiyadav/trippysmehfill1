@@ -35,6 +35,8 @@ export interface UserProfile {
   google_maps_url?: string;
   fraud_risk_level?: 'low' | 'medium' | 'high';
   fraud_risk_reasons?: string[];
+  wallet_balance?: number;
+  referral_code?: string;
 }
 
 export interface GalleryItem {

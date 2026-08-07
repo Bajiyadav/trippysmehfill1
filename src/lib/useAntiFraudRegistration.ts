@@ -67,10 +67,32 @@ export function useAntiFraudRegistration() {
         email: cleanEmail,
         password,
         options: {
+          // The anti-fraud telemetry travels as auth metadata because the
+          // profile row is written by the `on_auth_user_created` trigger, which
+          // runs before this browser has a session and therefore before it may
+          // write to `profiles` itself.
           data: {
             full_name: fullName.trim(),
             phone: phone.trim(),
-            hostel_address: hostelAddress.trim()
+            hostel_address: hostelAddress.trim(),
+            auth_provider: 'Email',
+            ip_address: sec.ipAddress,
+            latitude: sec.latitude,
+            longitude: sec.longitude,
+            gps_accuracy: sec.accuracyMeters,
+            gps_allowed: sec.gpsAllowed,
+            city: sec.city,
+            state: sec.state,
+            country: sec.country,
+            pin_code: sec.pinCode,
+            distance_km: sec.distanceKm,
+            device_type: sec.deviceType,
+            os_name: sec.osName,
+            browser_name: sec.browserName,
+            timezone: sec.timezone,
+            google_maps_url: sec.googleMapsUrl,
+            fraud_risk_level: sec.fraudRiskLevel,
+            fraud_risk_reasons: sec.fraudRiskReasons
           }
         }
       });
@@ -126,27 +148,30 @@ export function useAntiFraudRegistration() {
         created_at: new Date().toISOString()
       };
 
+      // 3. Upsert Profile safely only if session is active; otherwise rely on DB trigger
+      const { data: { session: activeSession } } = await supabase.auth.getSession();
+      
+      if (!activeSession) {
+        // Until the email code is confirmed there is no session, so writing to profiles
+        // client-side is skipped. The handle_new_user_signup trigger creates the row
+        // server-side from raw_user_meta_data, preventing 401 Unauthorized console errors.
+        setLoading(false);
+        return { success: true, user: profilePayload };
+      }
+
       const { data: upsertData, error: profileError } = await supabase
         .from('profiles')
         .upsert([profilePayload], { onConflict: 'id' })
         .select()
-        .maybeSingle();
+        .single();
 
-      let finalProfile = upsertData as UserProfile | null;
-
-      if (profileError || !finalProfile) {
-        if (profileError) {
-          console.warn('[Anti-Fraud Reg] Profile upsert notice (trying fetch fallback):', profileError.message);
-        }
-        const { data: fetchedProfile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
-
-        finalProfile = (fetchedProfile as UserProfile) || profilePayload;
+      if (profileError) {
+        console.warn('[Anti-Fraud Reg] Profile upsert notice:', profileError.message);
+        setLoading(false);
+        return { success: true, user: profilePayload };
       }
 
+      const finalProfile = (upsertData as UserProfile) || profilePayload;
       setLoading(false);
       return { success: true, user: finalProfile };
     } catch (err: any) {

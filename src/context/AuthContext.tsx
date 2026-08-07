@@ -67,22 +67,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const authUser = activeSession.user;
     const isAdminEmail = authUser.email?.toLowerCase() === 'nagapavankumarjavisetty@gmail.com' || authUser.email?.toLowerCase() === 'admin@gallery.app';
 
-    let profile: UserProfile | null = null;
-    try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authUser.id)
-        .maybeSingle();
-      if (data) {
-        profile = data as UserProfile;
-      }
-    } catch (err) {
-      console.warn('[Auth] Direct profile select error:', err);
-    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authUser.id)
+      .maybeSingle();
 
     if (profile) {
-      if (profile.account_status === 'blocked_fraud') {
+      if ((profile as UserProfile).account_status === 'blocked_fraud') {
         await supabase.auth.signOut();
         return null;
       }
@@ -90,12 +82,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await supabase.from('profiles').update({ role: 'admin' }).eq('id', authUser.id);
         profile.role = 'admin';
       }
-      return profile;
+      return profile as UserProfile;
     }
 
     // First sign-in for this auth user: create a profile from metadata.
     const meta = (authUser.user_metadata || {}) as Record<string, any>;
-    const fallbackProfile: UserProfile = {
+    const newProfile: UserProfile = {
       id: authUser.id,
       email: authUser.email || '',
       full_name: meta.full_name || authUser.email?.split('@')[0] || 'Customer',
@@ -109,19 +101,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString()
     };
 
-    try {
-      const { data: inserted } = await supabase
-        .from('profiles')
-        .upsert([fallbackProfile], { onConflict: 'id' })
-        .select()
-        .maybeSingle();
+    const { data: inserted } = await supabase
+      .from('profiles')
+      .upsert([newProfile], { onConflict: 'id' })
+      .select()
+      .maybeSingle();
 
-      if (inserted) return inserted as UserProfile;
-    } catch (err) {
-      console.warn('[Auth] Fallback profile upsert error:', err);
-    }
-
-    return fallbackProfile;
+    return (inserted as UserProfile) || newProfile;
   }, []);
 
   const applySession = useCallback(
@@ -134,11 +120,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       try {
-        const loaded = await loadProfile(nextSession);
-        setUser(loaded);
+        setUser(await loadProfile(nextSession));
       } catch (err) {
         console.error('[Auth] Failed to load profile:', err);
-        // Do not immediately wipe user if transient load issue occurred
+        setUser(null);
       }
     },
     [loadProfile]
@@ -189,30 +174,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setLoading(true);
     try {
-      // If identifier is not an email (e.g. phone number or username), resolve via SECURITY DEFINER RPC
+      // If identifier is not an email (e.g. phone number or username), find email from profiles
       if (!email.includes('@')) {
-        const { data: rpcEmail } = await supabase.rpc('get_email_by_identifier', {
+        // `profiles` is unreadable until a session exists, so the phone/username
+        // to email resolution goes through a SECURITY DEFINER function.
+        const { data: foundEmail } = await supabase.rpc('lookup_login_email', {
           p_identifier: identifier.trim()
         });
 
-        if (rpcEmail) {
-          email = rpcEmail.toLowerCase();
+        if (typeof foundEmail === 'string' && foundEmail) {
+          email = foundEmail.toLowerCase();
         } else {
-          // Fallback direct query in case RPC is unavailable
-          const { data: foundProfile } = await supabase
-            .from('profiles')
-            .select('email')
-            .or(`phone.eq.${identifier.trim()},email.eq.${identifier.trim().toLowerCase()}`)
-            .maybeSingle();
-
-          if (foundProfile && foundProfile.email) {
-            email = foundProfile.email.toLowerCase();
-          } else {
-            return {
-              success: false,
-              message: 'No account found with this phone number or username. Please check your details or enter your email.'
-            };
-          }
+          return {
+            success: false,
+            message: 'No account found with this phone number or username. Please check your details or enter your email.'
+          };
         }
       }
 
@@ -281,18 +257,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       let targetUserId: string | null = activeSession?.user.id || null;
 
-      const sec = await captureFullSecurityContext();
-
       if (activeSession) {
         await supabase.auth.updateUser({
-          password: data.password,
           data: {
             full_name: data.full_name.trim(),
             phone: data.phone.trim(),
-            hostel_address: data.hostel_address.trim(),
-            ip_address: sec.ipAddress,
-            latitude: sec.latitude,
-            longitude: sec.longitude
+            hostel_address: data.hostel_address.trim()
           }
         });
       } else {
@@ -304,10 +274,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             data: {
               full_name: data.full_name.trim(),
               phone: data.phone.trim(),
-              hostel_address: data.hostel_address.trim(),
-              ip_address: sec.ipAddress,
-              latitude: sec.latitude,
-              longitude: sec.longitude
+              hostel_address: data.hostel_address.trim()
             }
           }
         });
@@ -316,6 +283,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         if (signUpData.user) {
           targetUserId = signUpData.user.id;
+          // Establish active session immediately
           const { data: signInData } = await supabase.auth.signInWithPassword({
             email: cleanEmail,
             password: data.password
@@ -327,7 +295,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (targetUserId) {
-        const profilePayload: UserProfile = {
+        const sec = await captureFullSecurityContext();
+
+        const profile: UserProfile = {
           id: targetUserId,
           email: cleanEmail,
           full_name: data.full_name.trim(),
@@ -359,26 +329,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           created_at: new Date().toISOString()
         };
 
-        // Try upserting security metadata to profile; fallback to update if DB trigger already inserted the row
-        const { data: upsertData, error: profileError } = await supabase
+        console.log('[Auth] Attempting profile upsert for user:', targetUserId);
+        let { data: upsertData, error: profileError } = await supabase
           .from('profiles')
-          .upsert([profilePayload], { onConflict: 'id' })
+          .upsert([profile], { onConflict: 'id' })
           .select()
-          .maybeSingle();
+          .single();
 
         if (profileError) {
-          console.warn('[Auth] Profile upsert notice (trying update fallback):', profileError.message);
-          const { data: updateData } = await supabase
+          console.warn('[Auth] Profile upsert returned error, attempting update fallback:', profileError.message);
+          const { data: updateData, error: updateError } = await supabase
             .from('profiles')
-            .update(profilePayload)
+            .update({
+              full_name: data.full_name.trim(),
+              phone: data.phone.trim(),
+              hostel_address: data.hostel_address.trim(),
+              is_whatsapp_verified: true,
+              is_approved: true,
+              is_active: true
+            })
             .eq('id', targetUserId)
             .select()
-            .maybeSingle();
+            .single();
 
-          setUser((updateData as UserProfile) || profilePayload);
-        } else {
-          setUser((upsertData as UserProfile) || profilePayload);
+          if (updateError) {
+            console.error('[Auth] Profile update fallback error:', updateError.message);
+          } else if (updateData) {
+            upsertData = updateData;
+            profileError = null;
+          }
         }
+        setUser((upsertData as UserProfile) || profile);
       }
 
       if (activeSession) {
@@ -444,11 +425,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString()
     };
 
-    const { error } = await supabase.from('profiles').upsert([profile], { onConflict: 'id' });
-    if (error) {
-      console.warn('[Auth] Profile upsert notice, trying update fallback:', error.message);
-      await supabase.from('profiles').update(profile).eq('id', activeSession.user.id);
-    }
+    const { error } = await supabase.from('profiles').upsert([profile]);
+    if (error) console.error('[Auth] Profile upsert failed:', error);
 
     setSession(activeSession);
     setUser(profile);

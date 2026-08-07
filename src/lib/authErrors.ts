@@ -105,20 +105,15 @@ export function toFriendlyAuthError(error: unknown): FriendlyAuthError {
     };
   }
 
-  if (
-    text.includes('invalid login credentials') ||
-    text.includes('invalid_grant') ||
-    text.includes('invalid password') ||
-    text.includes('invalid credentials')
-  ) {
-    return { kind: 'invalid_otp', message: 'Invalid email or password. Please check your details or reset your password.' };
-  }
-
   if (status >= 500) {
     return {
       kind: 'network',
       message: 'The authentication service is temporarily unavailable. Please try again shortly.'
     };
+  }
+
+  if (text.includes('invalid login credentials')) {
+    return { kind: 'invalid_otp', message: 'Invalid credentials. Please try again.' };
   }
 
   return {
