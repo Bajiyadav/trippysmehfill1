@@ -49,7 +49,7 @@ export function validateCheckout(input: CheckoutInput): ValidationResult {
   if (!address.valid) return address;
 
   if (!input.paymentMethod || !CHECKOUT_PAYMENT_METHODS.includes(input.paymentMethod)) {
-    return fail('Please choose a payment method.');
+    return fail('Please select a payment method.');
   }
 
   if (input.subtotal < input.minOrderValue) {

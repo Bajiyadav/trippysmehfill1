@@ -58,7 +58,9 @@ test('requires a delivery address', () => {
 });
 
 test('requires a payment method the checkout actually offers', () => {
-  assert.equal(validateCheckout({ ...valid, paymentMethod: null }).valid, false);
+  const missing = validateCheckout({ ...valid, paymentMethod: null });
+  assert.equal(missing.valid, false);
+  assert.equal(missing.message, 'Please select a payment method.');
   // Card and Razorpay exist in the type but are not offered at checkout.
   assert.equal(validateCheckout({ ...valid, paymentMethod: 'Card' }).valid, false);
   assert.equal(validateCheckout({ ...valid, paymentMethod: 'Razorpay' }).valid, false);

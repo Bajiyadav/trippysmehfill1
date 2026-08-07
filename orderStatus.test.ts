@@ -90,7 +90,9 @@ test('placing an order raises no toast, but every later stage does', () => {
 
 test('payment label distinguishes cash on delivery from an unconfirmed transfer', () => {
   assert.equal(paymentLabel({ payment_method: 'COD', payment_status: 'pending' }), 'Pay on delivery');
-  assert.equal(paymentLabel({ payment_method: 'UPI', payment_status: 'pending' }), 'Payment pending confirmation');
+  // A UPI order stays pending until an admin verifies the transfer -- pressing
+  // "I've Paid" records a claim, it never settles anything.
+  assert.equal(paymentLabel({ payment_method: 'UPI', payment_status: 'pending' }), 'Pending Verification');
   assert.equal(paymentLabel({ payment_method: 'UPI', payment_status: 'completed' }), 'Paid');
   assert.equal(paymentLabel({ payment_method: 'COD', payment_status: 'refunded' }), 'Refunded');
 });

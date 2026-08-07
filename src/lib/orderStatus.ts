@@ -86,10 +86,17 @@ export function statusToastCopy(status: OrderStatus): { title: string; descripti
   }
 }
 
-/** How the payment currently stands, in words the customer can act on. */
+/**
+ * How the payment currently stands, in words the customer can act on.
+ *
+ * A UPI order sits at "Pending Verification" no matter what the customer has
+ * done -- pressing "I've Paid" records a claim, it does not settle anything.
+ * Only an admin confirming the transfer moves it to 'completed', and only then
+ * does this say "Paid".
+ */
 export function paymentLabel(order: Pick<Order, 'payment_method' | 'payment_status'>): string {
   if (order.payment_status === 'completed') return 'Paid';
   if (order.payment_status === 'failed') return 'Payment failed';
   if (order.payment_status === 'refunded') return 'Refunded';
-  return order.payment_method === 'COD' ? 'Pay on delivery' : 'Payment pending confirmation';
+  return order.payment_method === 'COD' ? 'Pay on delivery' : 'Pending Verification';
 }

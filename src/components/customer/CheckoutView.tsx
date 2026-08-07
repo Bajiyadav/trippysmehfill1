@@ -1,8 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  MapPin, QrCode, Wallet, CheckCircle2, AlertCircle, Loader2, ArrowLeft,
-  Clock, Copy, Check, ShoppingBag, User, Phone, Truck, Smartphone,
-  Download, Share2, ImageUp, ReceiptText
+  MapPin, CheckCircle2, AlertCircle, Loader2, ArrowLeft, Clock, Copy, Check,
+  ShoppingBag, User, Phone, Truck, Smartphone, Download, Share2, ImageUp, ReceiptText, Info
 } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
@@ -25,11 +24,30 @@ interface CheckoutViewProps {
   onBackToMenu: () => void;
 }
 
-/** UPI settlement is a claim by the customer until the kitchen confirms it. */
-type UpiState = 'pending' | 'claimed';
+/**
+ * Checkout is three screens, in this order:
+ *
+ *   form → (UPI only) upi_payment → confirmed
+ *
+ * The payment screen sits *after* the order row exists, never before. A
+ * customer must never be asked to transfer money for an order that then fails
+ * to save.
+ */
+type Step = 'form' | 'upi_payment' | 'confirmed';
 
 const PHONE_LENGTH = 10;
 const toPhoneDigits = (raw: string) => raw.replace(/\D/g, '').slice(0, PHONE_LENGTH);
+
+const UPI_APPS = ['Google Pay', 'PhonePe', 'Paytm', 'BHIM', 'Any UPI App'];
+
+/**
+ * `upi://` links only resolve where a UPI app is installed, which in practice
+ * means a phone. On desktop the button would silently do nothing, so it is
+ * labelled honestly instead of hidden -- the customer may well be on a tablet
+ * we cannot classify.
+ */
+const isLikelyMobile = () =>
+  typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
 export const CheckoutView: React.FC<CheckoutViewProps> = ({
   existingOrders,
@@ -41,6 +59,8 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const { user } = useAuth();
   const { showToast } = useToast();
 
+  const [step, setStep] = useState<Step>('form');
+
   // Seeded from the signed-in customer's own saved profile -- their data, not a
   // sample -- and editable, because the delivery address often is not home.
   const [fullName, setFullName] = useState(user?.full_name ?? '');
@@ -48,12 +68,17 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
   const [address, setAddress] = useState(user?.hostel_address ?? '');
   const [landmark, setLandmark] = useState('');
 
+  // Nothing is preselected. Cash on Delivery is *recommended*, which is a
+  // visual cue -- the customer still has to choose, so "Please select a payment
+  // method." is reachable rather than decorative.
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
-  const [upiState, setUpiState] = useState<UpiState>('pending');
+
   const [upiTxnId, setUpiTxnId] = useState('');
+  const [hasClaimedPayment, setHasClaimedPayment] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const [isPlacing, setIsPlacing] = useState(false);
+  const [isClaiming, setIsClaiming] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
@@ -83,11 +108,13 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     [existingOrders]
   );
 
+  const payableTotal = placedOrder?.total_amount ?? grandTotal;
+
   const upiUri = buildUpiPaymentUri({
     upiId: settings.restaurant_upi_id,
     payeeName: settings.kitchen_name,
-    amount: grandTotal,
-    orderNumber
+    amount: payableTotal,
+    orderNumber: placedOrder?.order_number ?? orderNumber
   });
 
   const business = { name: settings.kitchen_name, upiId: settings.restaurant_upi_id };
@@ -100,7 +127,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
       showToast({ title: 'UPI ID copied', tone: 'success', duration: 2500 });
     } catch {
       showToast({
-        title: 'Could not copy',
+        title: 'Could not copy automatically',
         description: `Use ${settings.restaurant_upi_id} manually.`,
         tone: 'error'
       });
@@ -157,8 +184,8 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
       delivery_fee: deliveryFee,
       total_amount: grandTotal,
       payment_method: paymentMethod as PaymentMethod,
-      // Both methods start unpaid. COD settles on handover; UPI settles when the
-      // transfer is confirmed. Neither is 'completed' at the moment of ordering.
+      // Both methods start unpaid. COD settles on handover; UPI stays pending
+      // until an admin verifies the transfer. Neither is ever 'completed' here.
       payment_status: 'pending',
       status: 'pending',
       customer_ip: securityContext?.ipAddress,
@@ -180,7 +207,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
 
     try {
       // The order exists only once this resolves. Everything after it -- the
-      // chime, the cleared cart, the confirmation -- is downstream of a real row.
+      // chime, the cleared cart, the payment screen -- is downstream of a real row.
       const created = await ordersService.createOrder(draft);
 
       playKitchenAlertSound();
@@ -194,32 +221,43 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
         tone: 'success',
         key: `order-received-${created.id}`
       });
+
+      // Only now is it fair to ask for money.
+      setStep(created.payment_method === 'UPI' ? 'upi_payment' : 'confirmed');
     } catch (err: any) {
       setErrorMsg(
         `We could not place your order: ${err?.message || 'the kitchen database rejected it'}. ` +
         'Nothing has been charged and your cart is intact — please try again.'
       );
       showToast({ title: 'Order failed', description: 'Nothing was charged.', tone: 'error' });
-      // Only released on failure: after success the confirmation screen replaces
-      // this form entirely, so there is nothing left to submit twice.
+      // Released only on failure: after success the form is gone, so there is
+      // nothing left to submit twice.
       submitLock.current = false;
     } finally {
       setIsPlacing(false);
     }
   };
 
-  const handleClaimUpiPayment = async () => {
+  const handleClaimPayment = async () => {
     if (!placedOrder) return;
     setErrorMsg('');
+    setIsClaiming(true);
 
     try {
-      // Recorded as still pending: the kitchen confirms the transfer landed.
-      // Marking it completed here would assert a settlement nobody checked.
+      // Stays 'pending'. This records the customer's reference so an admin can
+      // match the transfer -- it does not assert that money arrived.
       await ordersService.updatePaymentStatus(placedOrder.id, 'pending', upiTxnId.trim() || undefined);
-      setUpiState('claimed');
-      showToast({ title: 'Payment reference sent', description: 'The kitchen will confirm it.', tone: 'success' });
+      setHasClaimedPayment(true);
+      setStep('confirmed');
+      showToast({
+        title: 'Payment noted',
+        description: 'Our team will verify it and start preparing your food.',
+        tone: 'success'
+      });
     } catch (err: any) {
       setErrorMsg(`We could not record your payment: ${err?.message || 'database error'}. Please try again.`);
+    } finally {
+      setIsClaiming(false);
     }
   };
 
@@ -239,7 +277,7 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     if (!placedOrder) return;
     const result = await shareOrder(placedOrder, business);
     if (result === 'copied') {
-      showToast({ title: 'Order details copied', description: 'Paste them wherever you like.', tone: 'success' });
+      showToast({ title: 'Order details copied', tone: 'success' });
     } else if (result === 'unavailable') {
       showToast({ title: 'Sharing is not available on this device', tone: 'error' });
     }
@@ -257,43 +295,240 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     }
   };
 
-  // ---------------------------------------------------------------- confirmed
+  // ------------------------------------------------------------ shared pieces
 
-  if (placedOrder) {
+  const PageHeader = ({ title, blurb, onBack }: { title: string; blurb: string; onBack?: () => void }) => (
+    <header className="flex items-center gap-3">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="Go back"
+          className="w-11 h-11 shrink-0 rounded-2xl bg-[#181818] border border-white/10 text-gray-400 hover:text-white transition flex items-center justify-center"
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </button>
+      )}
+      <div className="min-w-0">
+        <h1 className="text-xl sm:text-2xl font-black text-white font-serif tracking-tight">{title}</h1>
+        <p className="text-[11px] sm:text-xs text-gray-400">{blurb}</p>
+      </div>
+    </header>
+  );
+
+  const ErrorBox = () =>
+    errorMsg ? (
+      <div className="p-4 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs rounded-2xl flex items-start gap-2.5">
+        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+        <span className="break-words">{errorMsg}</span>
+      </div>
+    ) : null;
+
+  // ------------------------------------------------------ step: UPI payment
+
+  if (step === 'upi_payment' && placedOrder) {
+    return (
+      <main className="flex-1 px-4 py-6 sm:py-10">
+        <div className="max-w-lg mx-auto space-y-4 sm:space-y-5">
+
+          {/* The order is already safe. Say so before asking for money. */}
+          <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-start gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="text-xs font-black text-emerald-300">
+                Order {placedOrder.order_number} saved
+              </p>
+              <p className="text-[11px] text-emerald-400/80 mt-0.5">
+                Your order is with the kitchen. Complete the payment below.
+              </p>
+            </div>
+          </div>
+
+          <PageHeader title="⚡ Instant UPI Payment" blurb="Pay now using any UPI app." />
+
+          <section className="bg-[#121212] border border-white/10 rounded-3xl p-5 sm:p-6 space-y-5">
+
+            {/* Amount */}
+            <div className="text-center">
+              <p className="text-[11px] uppercase tracking-wider text-gray-500 font-bold">Amount to pay</p>
+              <p className="text-4xl font-black text-[#C5A059] mt-1">₹{placedOrder.total_amount}</p>
+            </div>
+
+            {/* QR — scales with the viewport instead of a fixed pixel box */}
+            <div className="bg-white p-3 sm:p-4 rounded-2xl w-full max-w-[260px] mx-auto">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(upiUri)}`}
+                alt={`UPI QR code to pay ₹${placedOrder.total_amount}`}
+                className="w-full aspect-square object-contain"
+              />
+            </div>
+
+            {/* UPI ID — full width, easy to hit, one tap to copy */}
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-wider text-gray-500 font-bold text-center">UPI ID</p>
+              <div className="flex items-stretch gap-2">
+                <code className="flex-1 min-w-0 min-h-[52px] px-4 bg-[#181818] border border-white/10 rounded-2xl font-mono text-sm text-white flex items-center justify-center truncate">
+                  {settings.restaurant_upi_id}
+                </code>
+                <button
+                  type="button"
+                  onClick={handleCopyUpiId}
+                  className="min-h-[52px] px-4 shrink-0 rounded-2xl bg-[#181818] border border-white/10 text-gray-300 hover:text-white hover:bg-white/5 transition text-xs font-black flex items-center gap-2"
+                >
+                  {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            {/* UPI intent */}
+            <div className="space-y-1.5">
+              <a
+                href={upiUri}
+                className="w-full min-h-[56px] px-5 bg-[#C5A059] hover:bg-[#b38f48] active:scale-[0.99] text-black font-black rounded-2xl transition text-sm flex items-center justify-center gap-2"
+              >
+                <Smartphone className="w-5 h-5" /> Open UPI App
+              </a>
+              {!isLikelyMobile() && (
+                <p className="text-[10px] text-gray-500 text-center">
+                  Opening an app only works on a phone — scan the QR code instead.
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5">
+              {UPI_APPS.map(app => (
+                <span key={app} className="text-[10px] font-bold text-gray-500 bg-[#181818] border border-white/10 rounded-full px-2.5 py-1">
+                  {app}
+                </span>
+              ))}
+            </div>
+          </section>
+
+          {/* Instructions */}
+          <div className="p-4 bg-[#181818] border border-white/10 rounded-2xl flex items-start gap-3">
+            <Info className="w-4 h-4 text-[#C5A059] shrink-0 mt-0.5" />
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              Please complete your payment after placing the order. Once payment is received, our team
+              will verify and begin preparing your food.
+            </p>
+          </div>
+
+          <ErrorBox />
+
+          {/* Reference + confirm */}
+          <section className="space-y-2.5">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={upiTxnId}
+              onChange={(e) => setUpiTxnId(e.target.value.replace(/\D/g, '').slice(0, 12))}
+              placeholder="UPI transaction reference (optional)"
+              aria-label="UPI transaction reference"
+              className="w-full min-h-[52px] px-4 bg-[#181818] border border-white/10 rounded-2xl text-sm font-mono text-white placeholder-gray-500 outline-none focus:border-[#C5A059]"
+            />
+
+            <button
+              type="button"
+              onClick={handleClaimPayment}
+              disabled={isClaiming}
+              className="w-full min-h-[56px] px-5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white font-black rounded-2xl transition text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {isClaiming
+                ? <><Loader2 className="w-5 h-5 animate-spin" /> Saving…</>
+                : <><CheckCircle2 className="w-5 h-5" /> I've Paid</>}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => screenshotInput.current?.click()}
+              className="w-full min-h-[52px] px-5 bg-[#181818] border border-white/10 hover:bg-white/5 text-gray-300 font-bold rounded-2xl transition text-xs flex items-center justify-center gap-2"
+            >
+              <ImageUp className="w-4 h-4" /> Share Payment Screenshot
+            </button>
+            <input
+              ref={screenshotInput}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                handleScreenshotPicked(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+
+            <button
+              type="button"
+              onClick={() => setStep('confirmed')}
+              className="w-full min-h-[48px] text-gray-400 hover:text-white font-bold text-xs transition"
+            >
+              I'll pay later — view my order
+            </button>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  // -------------------------------------------------------- step: confirmed
+
+  if (step === 'confirmed' && placedOrder) {
     const eta = estimatedDeliveryLabel(placedAt ?? new Date(), settings.estimated_delivery_mins);
+    const isCod = placedOrder.payment_method === 'COD';
 
     return (
       <main className="flex-1 px-4 py-8 sm:py-12">
-        <div className="max-w-2xl mx-auto space-y-4 sm:space-y-5">
+        <div className="max-w-xl mx-auto space-y-4 sm:space-y-5">
 
-          {/* Success header */}
           <section className="bg-[#121212] border border-emerald-500/30 rounded-3xl p-6 sm:p-8 text-center space-y-3">
             <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-3xl mx-auto flex items-center justify-center">
               <CheckCircle2 className="w-9 h-9 sm:w-11 sm:h-11" />
             </div>
-            <div className="space-y-1">
-              <h1 className="text-2xl sm:text-3xl font-black text-white font-serif">Order Confirmed</h1>
-              <p className="text-xs sm:text-sm text-gray-400">Your order is with the kitchen.</p>
+            <h1 className="text-2xl sm:text-3xl font-black text-white font-serif">✅ Order Confirmed</h1>
+            <p className="text-xs sm:text-sm text-gray-400">
+              {isCod
+                ? 'Pay our delivery partner when your food arrives.'
+                : 'Our team will verify your payment and begin preparing your food.'}
+            </p>
+          </section>
+
+          {/* The four facts, plainly */}
+          <section className="bg-[#121212] border border-white/10 rounded-3xl divide-y divide-white/10">
+            {[
+              { label: 'Order ID', value: placedOrder.order_number, mono: true },
+              { label: 'Estimated Delivery', value: eta },
+              { label: 'Payment Method', value: isCod ? '🚚 Cash on Delivery' : '⚡ Instant UPI Payment' }
+            ].map(({ label, value, mono }) => (
+              <div key={label} className="flex items-center justify-between gap-4 p-4 sm:px-5">
+                <span className="text-[11px] uppercase tracking-wider text-gray-500 font-bold shrink-0">{label}</span>
+                <span className={`text-sm font-black text-white text-right min-w-0 break-words ${mono ? 'font-mono text-[#C5A059]' : ''}`}>
+                  {value}
+                </span>
+              </div>
+            ))}
+
+            <div className="flex items-center justify-between gap-4 p-4 sm:px-5">
+              <span className="text-[11px] uppercase tracking-wider text-gray-500 font-bold shrink-0">Payment Status</span>
+              <span className={`text-xs font-black px-3 py-1.5 rounded-full border shrink-0 ${
+                isCod
+                  ? 'bg-[#C5A059]/10 border-[#C5A059]/30 text-[#C5A059]'
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+              }`}>
+                {paymentLabel(placedOrder)}
+              </span>
             </div>
           </section>
 
-          {/* Key facts */}
-          <section className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-4 bg-[#121212] border border-white/10 rounded-2xl">
-              <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Order ID</p>
-              <p className="text-lg font-black text-[#C5A059] font-mono mt-1">{placedOrder.order_number}</p>
-              <p className="text-[10px] text-gray-500 font-mono mt-1 break-all">{placedOrder.id}</p>
-            </div>
-            <div className="p-4 bg-[#121212] border border-white/10 rounded-2xl">
-              <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Estimated Delivery</p>
-              <p className="text-lg font-black text-white mt-1 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-[#C5A059] shrink-0" /> {eta}
-              </p>
-            </div>
-          </section>
+          {!isCod && (
+            <p className="text-[11px] text-gray-500 text-center px-2 leading-relaxed">
+              {hasClaimedPayment
+                ? 'Your payment reference has been noted. It stays pending until our team verifies it.'
+                : 'Not paid yet? You can still pay using the UPI details on your order.'}
+            </p>
+          )}
 
-          {/* Items + total */}
-          <section className="bg-[#121212] border border-white/10 rounded-2xl p-4 sm:p-5 space-y-3">
+          {/* Items and total */}
+          <section className="bg-[#121212] border border-white/10 rounded-3xl p-5 space-y-3">
             <h2 className="text-sm font-black text-white font-serif flex items-center gap-2">
               <ReceiptText className="w-4 h-4 text-[#C5A059]" /> Your Items
             </h2>
@@ -307,203 +542,90 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                 </li>
               ))}
             </ul>
-            <div className="pt-3 border-t border-white/10 space-y-1.5 text-xs">
-              <div className="flex justify-between text-gray-400">
-                <span>Subtotal</span><span className="font-bold text-white">₹{placedOrder.subtotal}</span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Delivery</span>
-                <span className="font-bold">
-                  {placedOrder.delivery_fee === 0
-                    ? <span className="text-emerald-400 font-black uppercase">Free</span>
-                    : `₹${placedOrder.delivery_fee}`}
-                </span>
-              </div>
-              {placedOrder.tax_amount > 0 && (
-                <div className="flex justify-between text-gray-400">
-                  <span>Tax</span><span className="font-bold text-white">₹{placedOrder.tax_amount}</span>
-                </div>
-              )}
-              <div className="flex justify-between pt-2 border-t border-white/10 text-base font-black text-white">
-                <span>Total</span><span className="text-[#C5A059]">₹{placedOrder.total_amount}</span>
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-3">
-              <span className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Payment Status</span>
-              <span className={`text-xs font-black px-3 py-1.5 rounded-full border ${
-                upiState === 'claimed'
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                  : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-              }`}>
-                {placedOrder.payment_method === 'UPI' && upiState === 'claimed'
-                  ? 'Payment Success'
-                  : paymentLabel(placedOrder)}
-              </span>
+            <div className="flex justify-between pt-3 border-t border-white/10 text-base font-black text-white">
+              <span>Total</span><span className="text-[#C5A059]">₹{placedOrder.total_amount}</span>
             </div>
           </section>
 
-          {/* UPI settlement, after the order already exists */}
-          {placedOrder.payment_method === 'UPI' && (
-            <section className="bg-[#121212] border border-white/10 rounded-2xl p-4 sm:p-5 space-y-4">
-              {upiState === 'claimed' ? (
-                <div className="text-center space-y-1.5 py-2">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
-                  <p className="text-sm font-black text-emerald-400">Payment Success</p>
-                  <p className="text-[11px] text-gray-400 max-w-sm mx-auto">
-                    Your reference has been sent to the kitchen. They will confirm the transfer before dispatch.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <div className="text-center space-y-1">
-                    <p className="text-sm font-black text-amber-400 flex items-center justify-center gap-2">
-                      <Clock className="w-4 h-4" /> Payment Pending
-                    </p>
-                    <p className="text-[11px] text-gray-400">Pay ₹{placedOrder.total_amount} using any UPI app.</p>
-                  </div>
+          <ErrorBox />
 
-                  <div className="bg-white p-3 rounded-2xl w-fit mx-auto">
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiUri)}`}
-                      alt={`UPI QR code to pay ₹${placedOrder.total_amount}`}
-                      className="w-40 h-40 sm:w-48 sm:h-48"
-                    />
-                  </div>
-
-                  {/* UPI Intent — opens the installed UPI app directly */}
-                  <a
-                    href={upiUri}
-                    className="w-full min-h-[48px] px-4 bg-[#C5A059] hover:bg-[#b38f48] text-black font-black rounded-2xl transition text-sm flex items-center justify-center gap-2"
-                  >
-                    <Smartphone className="w-4 h-4" /> Pay with UPI App
-                  </a>
-
-                  <div className="flex items-stretch gap-2">
-                    <code className="flex-1 min-w-0 text-xs text-white bg-[#181818] px-3 rounded-xl border border-white/10 font-mono flex items-center truncate">
-                      {settings.restaurant_upi_id}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={handleCopyUpiId}
-                      className="min-h-[44px] px-4 rounded-xl bg-[#181818] border border-white/10 text-gray-300 hover:text-white hover:bg-white/5 transition text-xs font-bold flex items-center gap-1.5 shrink-0"
-                    >
-                      {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copied ? 'Copied' : 'Copy ID'}
-                    </button>
-                  </div>
-
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={upiTxnId}
-                    onChange={(e) => setUpiTxnId(e.target.value.replace(/\D/g, '').slice(0, 12))}
-                    placeholder="UPI transaction reference (optional)"
-                    aria-label="UPI transaction reference"
-                    className="w-full min-h-[48px] px-4 bg-[#181818] border border-white/10 rounded-xl text-xs font-mono text-white placeholder-gray-500 outline-none focus:border-[#C5A059]"
-                  />
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={handleClaimUpiPayment}
-                      className="min-h-[48px] px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl transition text-xs"
-                    >
-                      I've Paid
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => screenshotInput.current?.click()}
-                      className="min-h-[48px] px-4 bg-[#181818] border border-white/10 text-gray-300 hover:bg-white/5 font-bold rounded-xl transition text-xs flex items-center justify-center gap-2"
-                    >
-                      <ImageUp className="w-4 h-4" /> Share Screenshot
-                    </button>
-                    <input
-                      ref={screenshotInput}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        handleScreenshotPicked(e.target.files?.[0]);
-                        e.target.value = '';
-                      }}
-                    />
-                  </div>
-                </>
-              )}
-            </section>
-          )}
-
-          {errorMsg && (
-            <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs rounded-2xl flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
-          {/* Actions */}
-          <section className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {/* Primary actions */}
+          <section className="space-y-2.5">
             <button
               type="button"
               onClick={() => onTrackOrder(placedOrder)}
-              className="min-h-[52px] px-4 bg-[#C5A059] hover:bg-[#b38f48] text-black font-black rounded-2xl transition text-sm flex items-center justify-center gap-2 sm:col-span-2"
+              className="w-full min-h-[56px] px-5 bg-[#C5A059] hover:bg-[#b38f48] active:scale-[0.99] text-black font-black rounded-2xl transition text-sm flex items-center justify-center gap-2"
             >
-              <Truck className="w-4 h-4" /> Track Order
+              <Truck className="w-5 h-5" /> Track Order
             </button>
-            <button
-              type="button"
-              onClick={handleDownloadReceipt}
-              disabled={isDownloading}
-              className="min-h-[48px] px-4 bg-[#181818] border border-white/10 hover:bg-white/5 text-gray-300 font-bold rounded-2xl transition text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {isDownloading
-                ? <><Loader2 className="w-4 h-4 animate-spin" /> Preparing…</>
-                : <><Download className="w-4 h-4" /> Download Receipt</>}
-            </button>
-            <button
-              type="button"
-              onClick={handleShareOrder}
-              className="min-h-[48px] px-4 bg-[#181818] border border-white/10 hover:bg-white/5 text-gray-300 font-bold rounded-2xl transition text-xs flex items-center justify-center gap-2"
-            >
-              <Share2 className="w-4 h-4" /> Share Order
-            </button>
+
             <button
               type="button"
               onClick={onBackToMenu}
-              className="min-h-[48px] px-4 text-gray-400 hover:text-white font-bold rounded-2xl transition text-xs sm:col-span-2"
+              className="w-full min-h-[52px] px-5 bg-[#181818] border border-white/10 hover:bg-white/5 text-gray-300 font-bold rounded-2xl transition text-sm"
             >
               Back to Menu
             </button>
+
+            {/* Secondary, kept out of the way */}
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={handleDownloadReceipt}
+                disabled={isDownloading}
+                className="min-h-[48px] px-3 text-gray-400 hover:text-white font-bold rounded-2xl transition text-[11px] flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {isDownloading
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Preparing…</>
+                  : <><Download className="w-3.5 h-3.5" /> Receipt</>}
+              </button>
+              <button
+                type="button"
+                onClick={handleShareOrder}
+                className="min-h-[48px] px-3 text-gray-400 hover:text-white font-bold rounded-2xl transition text-[11px] flex items-center justify-center gap-1.5"
+              >
+                <Share2 className="w-3.5 h-3.5" /> Share
+              </button>
+            </div>
           </section>
         </div>
       </main>
     );
   }
 
-  // ----------------------------------------------------------------- checkout
+  // ------------------------------------------------------------- step: form
 
   const inputClass =
-    'w-full min-h-[48px] pl-11 pr-4 bg-[#181818] border border-white/10 rounded-2xl text-sm text-white ' +
+    'w-full min-h-[52px] pl-11 pr-4 bg-[#181818] border border-white/10 rounded-2xl text-sm text-white ' +
     'placeholder-gray-500 outline-none focus:border-[#C5A059] transition';
 
+  const ctaLabel =
+    paymentMethod === 'COD' ? 'Continue with Cash on Delivery'
+    : paymentMethod === 'UPI' ? 'Continue with UPI Payment'
+    : `Place Order • ₹${grandTotal}`;
+
+  const Cta = () => (
+    <button
+      type="button"
+      onClick={handlePlaceOrder}
+      disabled={isPlacing || !validation.valid}
+      className="w-full min-h-[56px] px-5 bg-[#C5A059] hover:bg-[#b38f48] active:scale-[0.99] text-black font-black rounded-2xl shadow-lg shadow-[#C5A059]/20 transition text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {isPlacing
+        ? <><Loader2 className="w-5 h-5 animate-spin" /> Placing your order…</>
+        : <><CheckCircle2 className="w-5 h-5" /> {ctaLabel}</>}
+    </button>
+  );
+
   return (
-    <main className="flex-1 px-4 py-6 sm:py-10 pb-32 lg:pb-10">
+    <main className="flex-1 px-4 py-6 sm:py-10 pb-40 lg:pb-10">
       <div className="max-w-3xl mx-auto space-y-4 sm:space-y-5">
 
-        <header className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onBackToMenu}
-            aria-label="Back to menu"
-            className="w-11 h-11 shrink-0 rounded-2xl bg-[#181818] border border-white/10 text-gray-400 hover:text-white transition flex items-center justify-center"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-black text-white font-serif tracking-tight">Checkout</h1>
-            <p className="text-[11px] sm:text-xs text-gray-400">Confirm your details and choose how to pay.</p>
-          </div>
-        </header>
+        <PageHeader
+          title="Checkout"
+          blurb="Confirm your details and choose how to pay."
+          onBack={onBackToMenu}
+        />
 
         {cart.length === 0 ? (
           <div className="bg-[#121212] border border-white/10 rounded-3xl p-10 text-center space-y-3">
@@ -513,19 +635,14 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
             <button
               type="button"
               onClick={onBackToMenu}
-              className="mt-1 min-h-[48px] px-6 bg-[#C5A059] hover:bg-[#b38f48] text-black font-black rounded-2xl transition text-xs"
+              className="mt-1 min-h-[52px] px-6 bg-[#C5A059] hover:bg-[#b38f48] text-black font-black rounded-2xl transition text-xs"
             >
               Browse Menu
             </button>
           </div>
         ) : (
           <>
-            {errorMsg && (
-              <div className="p-4 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs rounded-2xl flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span className="break-words">{errorMsg}</span>
-              </div>
-            )}
+            <ErrorBox />
 
             {/* Delivery details */}
             <section className="bg-[#121212] border border-white/10 rounded-3xl p-5 sm:p-6 space-y-4">
@@ -576,48 +693,93 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
               <input
                 type="text" value={landmark} onChange={(e) => setLandmark(e.target.value)}
                 placeholder="Landmark (optional)" aria-label="Landmark (optional)"
-                className="w-full min-h-[48px] px-4 bg-[#181818] border border-white/10 rounded-2xl text-sm text-white placeholder-gray-500 outline-none focus:border-[#C5A059] transition"
+                className="w-full min-h-[52px] px-4 bg-[#181818] border border-white/10 rounded-2xl text-sm text-white placeholder-gray-500 outline-none focus:border-[#C5A059] transition"
               />
             </section>
 
-            {/* Payment — large tap-friendly cards */}
+            {/* Payment method */}
             <section className="bg-[#121212] border border-white/10 rounded-3xl p-5 sm:p-6 space-y-3">
               <h2 className="text-sm font-black text-white font-serif">Payment Method</h2>
 
-              <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {([
-                  { key: 'COD' as const, icon: Wallet, title: 'Cash on Delivery', blurb: 'Pay the rider when it arrives.' },
-                  { key: 'UPI' as const, icon: QrCode, title: 'UPI QR Payment', blurb: 'Scan or open your UPI app after ordering.' }
-                ]).map(({ key, icon: Icon, title, blurb }) => {
-                  const selected = paymentMethod === key;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => setPaymentMethod(key)}
-                      className={`relative min-h-[112px] p-5 rounded-2xl border-2 text-left transition ${
-                        selected
-                          ? 'border-[#C5A059] bg-[#C5A059]/10'
-                          : 'border-white/10 bg-[#181818] hover:bg-white/5'
-                      }`}
-                    >
-                      {selected && (
-                        <CheckCircle2 className="w-5 h-5 text-[#C5A059] absolute top-4 right-4" />
-                      )}
-                      <Icon className={`w-7 h-7 mb-2.5 ${selected ? 'text-[#C5A059]' : 'text-gray-400'}`} />
-                      <p className={`text-sm font-black ${selected ? 'text-[#C5A059]' : 'text-white'}`}>{title}</p>
-                      <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">{blurb}</p>
-                    </button>
-                  );
-                })}
+              <div role="radiogroup" aria-label="Payment method" className="space-y-3">
+
+                {/* ① Cash on Delivery — recommended */}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={paymentMethod === 'COD'}
+                  onClick={() => setPaymentMethod('COD')}
+                  className={`relative w-full text-left p-5 rounded-2xl border-2 transition ${
+                    paymentMethod === 'COD'
+                      ? 'border-[#C5A059] bg-[#C5A059]/10'
+                      : 'border-white/10 bg-[#181818] hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <span className="text-3xl leading-none shrink-0" aria-hidden="true">🚚</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className={`text-sm font-black ${paymentMethod === 'COD' ? 'text-[#C5A059]' : 'text-white'}`}>
+                          Cash on Delivery
+                        </p>
+                        <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded-full px-2 py-0.5">
+                          Recommended
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+                        Pay our delivery partner when your food arrives. No advance payment required.
+                      </p>
+                    </div>
+                    {paymentMethod === 'COD' && <CheckCircle2 className="w-5 h-5 text-[#C5A059] shrink-0" />}
+                  </div>
+                </button>
+
+                {/* ② Instant UPI Payment */}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={paymentMethod === 'UPI'}
+                  onClick={() => setPaymentMethod('UPI')}
+                  className={`relative w-full text-left p-5 rounded-2xl border-2 transition ${
+                    paymentMethod === 'UPI'
+                      ? 'border-[#C5A059] bg-[#C5A059]/10'
+                      : 'border-white/10 bg-[#181818] hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <span className="text-3xl leading-none shrink-0" aria-hidden="true">⚡</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className={`text-sm font-black ${paymentMethod === 'UPI' ? 'text-[#C5A059]' : 'text-white'}`}>
+                          Instant UPI Payment
+                        </p>
+                        <span className="text-[9px] font-black uppercase tracking-wider text-gray-500 border border-white/10 rounded-full px-2 py-0.5">
+                          Optional
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+                        Pay now using any UPI app.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 mt-2.5">
+                        {UPI_APPS.map(app => (
+                          <span key={app} className="text-[10px] font-bold text-gray-400 bg-[#121212] border border-white/10 rounded-full px-2 py-0.5">
+                            {app}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    {paymentMethod === 'UPI' && <CheckCircle2 className="w-5 h-5 text-[#C5A059] shrink-0" />}
+                  </div>
+                </button>
               </div>
 
               {paymentMethod === 'UPI' && (
-                <p className="text-[11px] text-gray-400 bg-[#181818] border border-white/10 rounded-2xl p-3.5 leading-relaxed">
-                  The QR code, UPI app link and UPI ID appear on the next screen, once your order is saved — so
-                  you never pay for an order that failed to reach the kitchen.
+                <p className="text-[11px] text-gray-400 bg-[#181818] border border-white/10 rounded-2xl p-3.5 leading-relaxed flex items-start gap-2.5">
+                  <Info className="w-3.5 h-3.5 text-[#C5A059] shrink-0 mt-0.5" />
+                  <span>
+                    We'll place your order first, then show the QR code and UPI ID — so you never pay for
+                    an order that failed to reach the kitchen.
+                  </span>
                 </p>
               )}
             </section>
@@ -672,38 +834,20 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
               {!validation.valid && (
                 <p className="text-[11px] text-[#C5A059] text-center">{validation.message}</p>
               )}
-              <button
-                type="button"
-                onClick={handlePlaceOrder}
-                disabled={isPlacing || !validation.valid}
-                className="w-full min-h-[52px] bg-[#C5A059] hover:bg-[#b38f48] text-black font-black rounded-2xl shadow-lg shadow-[#C5A059]/20 transition text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isPlacing
-                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Placing your order…</>
-                  : <><CheckCircle2 className="w-4 h-4" /> Place Order • ₹{grandTotal}</>}
-              </button>
+              <Cta />
             </div>
           </>
         )}
       </div>
 
       {/* Sticky bottom bar — the primary action stays reachable on phones without
-          scrolling back down past the summary. Hidden once the cart is empty. */}
+          scrolling back down past the summary. */}
       {cart.length > 0 && (
         <div className="lg:hidden fixed inset-x-0 bottom-0 z-40 bg-[#0d0d0d]/95 backdrop-blur border-t border-white/10 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
           {!validation.valid && (
             <p className="text-[11px] text-[#C5A059] text-center mb-2 leading-snug">{validation.message}</p>
           )}
-          <button
-            type="button"
-            onClick={handlePlaceOrder}
-            disabled={isPlacing || !validation.valid}
-            className="w-full min-h-[52px] bg-[#C5A059] hover:bg-[#b38f48] active:scale-[0.99] text-black font-black rounded-2xl shadow-lg transition text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isPlacing
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Placing your order…</>
-              : <><CheckCircle2 className="w-4 h-4" /> Place Order • ₹{grandTotal}</>}
-          </button>
+          <Cta />
         </div>
       )}
     </main>
