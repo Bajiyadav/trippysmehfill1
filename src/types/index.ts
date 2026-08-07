@@ -1,5 +1,17 @@
 export type UserRole = 'customer' | 'admin' | 'staff' | 'driver';
 
+/**
+ * The top-level sections App.tsx can render.
+ *
+ * This list must contain only values that actually render something. It
+ * previously also allowed 'track' and 'kitchen', neither of which had a render
+ * branch -- setting either would have produced a blank page with no error.
+ * Nothing set them, so the bug was latent rather than live, but the type
+ * permitted it. Kitchen is an admin tab, not a top-level section, and tracking
+ * is a modal.
+ */
+export type AppSection = 'menu' | 'checkout' | 'orders' | 'admin' | 'driver';
+
 export interface UserProfile {
   id: string;
   email: string;

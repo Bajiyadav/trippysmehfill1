@@ -56,7 +56,7 @@ import {
   initialFeedback,
   initialBanners
 } from './lib/initialData';
-import { FoodCategory, MenuItem, Order, OrderStatus, PaymentStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner, GalleryItem } from './types';
+import { AppSection, FoodCategory, MenuItem, Order, OrderStatus, PaymentStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner, GalleryItem } from './types';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import {
   menuService,
@@ -75,7 +75,7 @@ function MainApp() {
   const cartItemCount = cart.length;
   
   // Navigation & Tabs
-  const [activeSection, setActiveSection] = useState<'menu' | 'checkout' | 'orders' | 'track' | 'admin' | 'kitchen' | 'driver'>('menu');
+  const [activeSection, setActiveSection] = useState<AppSection>('menu');
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
 
   // Customer View Filters

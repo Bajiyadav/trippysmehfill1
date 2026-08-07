@@ -49,7 +49,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
  * Role switching bypasses authentication entirely, so it is a development aid
  * only and is compiled out of production builds.
  */
-const DEMO_ROLE_SWITCH_ENABLED = Boolean((import.meta as any).env?.DEV);
+export const DEMO_ROLE_SWITCH_ENABLED = Boolean((import.meta as any).env?.DEV);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
