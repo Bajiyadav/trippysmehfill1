@@ -107,6 +107,20 @@ export function validateEmail(raw: string): ValidationResult {
     return fail('Enter a valid email address (e.g. name@gmail.com).');
   }
 
+  const TYPO_DOMAINS: Record<string, string> = {
+    'gmil.com': 'gmail.com',
+    'gamil.com': 'gmail.com',
+    'gmai.com': 'gmail.com',
+    'gmaill.com': 'gmail.com',
+    'yaho.com': 'yahoo.com',
+    'yahooo.com': 'yahoo.com',
+    'hotmai.com': 'hotmail.com'
+  };
+
+  if (TYPO_DOMAINS[domain]) {
+    return fail(`Check your email spelling: did you mean @${TYPO_DOMAINS[domain]}?`);
+  }
+
   return ok;
 }
 

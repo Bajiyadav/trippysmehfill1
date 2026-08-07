@@ -12,6 +12,37 @@ export interface VerifyOtpResult {
   message: string;
 }
 
+const OTP_COOLDOWN_MS = 60000;
+const lastSentTimestamps: Record<string, number> = {};
+
+export function getRemainingOtpCooldownSeconds(email: string): number {
+  const cleanEmail = email.trim().toLowerCase();
+  let lastSent = lastSentTimestamps[cleanEmail] || 0;
+  if (!lastSent) {
+    try {
+      const stored = sessionStorage.getItem(`otp_sent_${cleanEmail}`);
+      if (stored) lastSent = parseInt(stored, 10);
+    } catch {
+      // Storage unavailable
+    }
+  }
+  if (!lastSent) return 0;
+  const elapsed = Date.now() - lastSent;
+  if (elapsed >= OTP_COOLDOWN_MS) return 0;
+  return Math.ceil((OTP_COOLDOWN_MS - elapsed) / 1000);
+}
+
+export function recordOtpSentTimestamp(email: string): void {
+  const cleanEmail = email.trim().toLowerCase();
+  const now = Date.now();
+  lastSentTimestamps[cleanEmail] = now;
+  try {
+    sessionStorage.setItem(`otp_sent_${cleanEmail}`, now.toString());
+  } catch {
+    // Storage unavailable
+  }
+}
+
 /**
  * Sends a 6-digit email verification code using Supabase Auth.
  *
@@ -35,26 +66,58 @@ export async function sendEmailVerificationOTP(
     return { success: false, message: NOT_CONFIGURED_MESSAGE };
   }
 
+  const remainingCooldown = getRemainingOtpCooldownSeconds(cleanEmail);
+  if (remainingCooldown > 0) {
+    console.log(`[EmailService] OTP rate limit enforced: ${remainingCooldown}s remaining for ${cleanEmail}`);
+    return {
+      success: true,
+      message: `An OTP verification code was already sent to ${cleanEmail}. Please enter the code or wait ${remainingCooldown}s to resend.`
+    };
+  }
+
   try {
-    const { error } = await supabase.auth.signInWithOtp({
+    console.log(`[EmailService] Requesting signup OTP resend via Supabase auth.resend for ${cleanEmail}...`);
+    
+    // 1. Try supabase.auth.resend for signup OTP
+    const { error: resendErr } = await supabase.auth.resend({
+      type: 'signup',
+      email: cleanEmail
+    });
+
+    if (!resendErr) {
+      recordOtpSentTimestamp(cleanEmail);
+      console.log(`[EmailService] Signup OTP successfully sent via Supabase auth.resend to ${cleanEmail}`);
+      return {
+        success: true,
+        message: `Verification code sent to ${cleanEmail}. Check your inbox (and spam folder).`
+      };
+    }
+
+    console.warn(`[EmailService] auth.resend returned: ${resendErr.message}. Trying signInWithOtp fallback...`);
+
+    // 2. Fallback to signInWithOtp if resend returns an error
+    const { error: otpError } = await supabase.auth.signInWithOtp({
       email: cleanEmail,
       options: {
-        // Create the auth user on first verification; profile rows are written
-        // once the code is confirmed.
         shouldCreateUser: true,
         data: fullName ? { full_name: fullName.trim() } : undefined
       }
     });
 
-    if (error) {
-      return { success: false, message: toFriendlyAuthError(error).message };
+    if (otpError) {
+      console.error(`[EmailService] Supabase OTP send error for ${cleanEmail}:`, otpError);
+      return { success: false, message: toFriendlyAuthError(otpError).message };
     }
+
+    recordOtpSentTimestamp(cleanEmail);
+    console.log(`[EmailService] OTP successfully sent via signInWithOtp fallback to ${cleanEmail}`);
 
     return {
       success: true,
       message: `Verification code sent to ${cleanEmail}. Check your inbox (and spam folder).`
     };
   } catch (err) {
+    console.error(`[EmailService] Exception sending OTP to ${cleanEmail}:`, err);
     return { success: false, message: toFriendlyAuthError(err).message };
   }
 }
@@ -120,18 +183,36 @@ export async function verifyEmailOTPCode(
   }
 
   try {
-    const { error } = await supabase.auth.verifyOtp({
+    console.log(`[EmailService] Verifying OTP for ${cleanEmail} (trying type: 'signup')...`);
+    // Try type 'signup' first because signUp creates the user with signup OTP
+    let { error } = await supabase.auth.verifyOtp({
       email: cleanEmail,
       token,
-      type: 'email'
+      type: 'signup'
     });
 
     if (error) {
-      return { success: false, message: toFriendlyAuthError(error).message };
+      console.warn(`[EmailService] verifyOtp with type 'signup' returned: ${error.message}. Trying fallback type 'email'...`);
+      // Fallback try type 'email' if token type was issued via signInWithOtp
+      const fallback = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token,
+        type: 'email'
+      });
+      if (!fallback.error) {
+        error = null;
+        console.log(`[EmailService] verifyOtp fallback with type 'email' succeeded for ${cleanEmail}`);
+      } else {
+        console.error(`[EmailService] Both signup and email verifyOtp failed for ${cleanEmail}:`, fallback.error);
+        return { success: false, message: toFriendlyAuthError(error).message };
+      }
+    } else {
+      console.log(`[EmailService] verifyOtp with type 'signup' succeeded for ${cleanEmail}`);
     }
 
     return { success: true, message: 'Email address verified successfully!' };
   } catch (err) {
+    console.error(`[EmailService] Exception verifying OTP for ${cleanEmail}:`, err);
     return { success: false, message: toFriendlyAuthError(err).message };
   }
 }

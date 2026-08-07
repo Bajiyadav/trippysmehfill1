@@ -85,6 +85,31 @@ CON=$(psql -q -d t_check -tAc "SELECT pg_get_constraintdef(oid) FROM pg_constrai
 if echo "$CON" | grep -q "rejected"; then echo "  FAIL  rollback left 'rejected' in the constraint"; FAILED=1
 else echo "  ok    CHECK constraint narrowed back"; fi
 
+# ===========================================================================
+step "C. Full chain including the merged upstream migrations (0008, 0009)"
+# ===========================================================================
+# 0008/0009 arrived from upstream numbered 0006/0007, colliding with ours.
+# They were renumbered to run after. This proves the whole sequence applies in
+# order, on both schema shapes, and that nothing upstream added undoes 0007.
+for DB in t_enum t_check; do
+  echo "  -- $DB --"
+  run $DB "$REPO/supabase/migrations/0008_fix_profiles_rls.sql"        "apply 0008 (profiles RLS)"
+  run $DB "$REPO/supabase/migrations/0009_profiles_wallet_referral.sql" "apply 0009 (wallet + referral)"
+  run $DB "$REPO/supabase/migrations/0008_fix_profiles_rls.sql"        "re-apply 0008 (idempotent)"
+  run $DB "$REPO/supabase/migrations/0009_profiles_wallet_referral.sql" "re-apply 0009 (idempotent)"
+
+  # 0009 replaces handle_new_user_signup(), which is the missing-signup-trigger
+  # risk flagged as B6 in the release checklist.
+  SIGNUP=$(psql -q -d $DB -tAc "SELECT CASE WHEN to_regprocedure('public.handle_new_user_signup()') IS NULL THEN 'missing' ELSE 'present' END;")
+  if [ "$SIGNUP" = "present" ]; then echo "  ok    handle_new_user_signup() present"
+  else echo "  FAIL  handle_new_user_signup() $SIGNUP"; FAILED=1; fi
+
+  # The Phase 3 payment guard must survive everything upstream added.
+  TRG=$(psql -q -d $DB -tAc "SELECT count(*) FROM pg_trigger WHERE tgrelid='public.orders'::regclass AND tgname='trg_enforce_customer_order_update';")
+  if [ "$TRG" = "1" ]; then echo "  ok    payment verification trigger still installed"
+  else echo "  FAIL  payment trigger count after 0008/0009: $TRG"; FAILED=1; fi
+done
+
 printf '\n'
 if [ $FAILED -eq 0 ]; then echo "RESULT: all migration checks passed"; else echo "RESULT: FAILURES ABOVE"; fi
 exit $FAILED

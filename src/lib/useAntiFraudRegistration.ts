@@ -148,6 +148,17 @@ export function useAntiFraudRegistration() {
         created_at: new Date().toISOString()
       };
 
+      // 3. Upsert Profile safely only if session is active; otherwise rely on DB trigger
+      const { data: { session: activeSession } } = await supabase.auth.getSession();
+      
+      if (!activeSession) {
+        // Until the email code is confirmed there is no session, so writing to profiles
+        // client-side is skipped. The handle_new_user_signup trigger creates the row
+        // server-side from raw_user_meta_data, preventing 401 Unauthorized console errors.
+        setLoading(false);
+        return { success: true, user: profilePayload };
+      }
+
       const { data: upsertData, error: profileError } = await supabase
         .from('profiles')
         .upsert([profilePayload], { onConflict: 'id' })
@@ -159,7 +170,7 @@ export function useAntiFraudRegistration() {
       // signup trigger has already created the row from the metadata above, and
       // the profile is re-synced once the session exists.
       if (profileError) {
-        console.warn('[Anti-Fraud Reg] Profile upsert deferred to signup trigger:', profileError.message);
+        console.warn('[Anti-Fraud Reg] Profile upsert notice:', profileError.message);
         setLoading(false);
         return { success: true, user: profilePayload };
       }

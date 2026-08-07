@@ -66,13 +66,67 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [enteredOtp, setEnteredOtp] = useState<string>('');
   const [resendTimer, setResendTimer] = useState<number>(60);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
 
   const [errorMsg, setErrorMsg] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
 
+  // Save OTP verification state to sessionStorage
+  const savePendingOtpState = (emailAddr: string, nameVal: string, phoneVal: string, addrVal: string, step: 'form' | 'otp_verify' | 'google_verify') => {
+    try {
+      const stateObj = {
+        email: emailAddr,
+        fullName: nameVal,
+        phone: phoneVal,
+        hostelAddress: addrVal,
+        regStep: step,
+        timestamp: Date.now()
+      };
+      sessionStorage.setItem('trippys_pending_otp_state', JSON.stringify(stateObj));
+    } catch {
+      // Storage unavailable
+    }
+  };
+
+  const clearPendingOtpState = () => {
+    try {
+      sessionStorage.removeItem('trippys_pending_otp_state');
+    } catch {
+      // Storage unavailable
+    }
+  };
+
   useEffect(() => {
     setActiveTab(defaultTab);
   }, [defaultTab, isOpen]);
+
+  // Restore OTP verification state on open, so a customer who reloads or
+  // switches away mid-verification is not sent back to the start of signup.
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const saved = sessionStorage.getItem('trippys_pending_otp_state');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const ageMs = Date.now() - (parsed.timestamp || 0);
+        if (ageMs < 600000 && parsed.email) {
+          console.log('[AuthModal] Restoring pending OTP verification state for:', parsed.email);
+          setEmail(parsed.email);
+          if (parsed.fullName) setFullName(parsed.fullName);
+          if (parsed.phone) setPhone(parsed.phone);
+          if (parsed.hostelAddress) setHostelAddress(parsed.hostelAddress);
+          if (parsed.regStep === 'otp_verify') {
+            setRegStep('otp_verify');
+            setActiveTab('register');
+            const remSec = Math.max(0, 60 - Math.floor(ageMs / 1000));
+            setResendTimer(remSec);
+          }
+        }
+      }
+    } catch {
+      // Storage unavailable
+    }
+  }, [isOpen]);
 
   // Resend Timer countdown. Every OTP screen sets resendTimer, so the countdown
   // is driven by the timer alone -- gating it on regStep left the Google and
@@ -213,13 +267,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMsg('');
     setInfoMsg('');
 
+    if (isSendingOtp) {
+      console.log('[AuthModal] Blocked duplicate signup submit while request in flight');
+      return;
+    }
+
     const cleanEmail = email.trim().toLowerCase();
     const cleanPhone = phone.trim();
     const cleanName = fullName.trim();
     const cleanAddress = hostelAddress.trim();
 
-    // Full registration validation. These same rules run again on the server,
-    // which is where they are actually enforced -- this pass is for fast feedback.
+    console.log('[AuthModal] Step 1: Validating registration input for:', cleanEmail);
     const validation = validateRegistration({
       fullName: cleanName,
       email: cleanEmail,
@@ -229,6 +287,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     });
 
     if (!validation.valid) {
+      console.warn('[AuthModal] Input validation failed:', validation.message);
       setErrorMsg(validation.message);
       return;
     }
@@ -237,54 +296,87 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const geo = await captureSecurityDetails();
     if (!geo.isOK) return;
 
-    // Check if email or phone number is already registered
-    const { data: existingProfiles } = await supabase
-      .from('profiles')
-      .select('email, phone')
-      .or(`email.ilike.${cleanEmail},phone.eq.${cleanPhone}`);
-
-    if (existingProfiles && existingProfiles.length > 0) {
-      const matchEmail = existingProfiles.some(p => p.email?.toLowerCase() === cleanEmail);
-      if (matchEmail) {
+    // Check if email or phone number is already registered via SECURITY DEFINER RPCs (bypasses anon RLS 401 errors)
+    try {
+      const { data: emailExists } = await supabase.rpc('email_exists', { p_email: cleanEmail });
+      if (emailExists) {
         setErrorMsg('This email address is already registered. Please sign in instead or use Forgot Password.');
         return;
       }
-      const matchPhone = existingProfiles.some(p => p.phone === cleanPhone);
-      if (matchPhone) {
+      const { data: phoneExists } = await supabase.rpc('phone_exists', { p_phone: cleanPhone });
+      if (phoneExists) {
         setErrorMsg('This mobile phone number is already registered to another account. Please sign in instead.');
         return;
       }
+    } catch (rpcErr) {
+      console.warn('[AuthModal] Duplicate lookup via RPC notice:', rpcErr);
     }
 
-    // Register account directly with Mobile Phone Number & Password!
-    const res = await signUp({
-      full_name: cleanName,
-      phone: cleanPhone,
-      hostel_address: cleanAddress,
-      email: cleanEmail,
-      password
-    });
+    setIsSendingOtp(true);
+    try {
+      console.log('[AuthModal] Step 2: Registering user & triggering Signup OTP via Supabase Auth for:', cleanEmail);
+      const signUpRes = await signUp({
+        full_name: cleanName,
+        phone: cleanPhone,
+        hostel_address: cleanAddress,
+        email: cleanEmail,
+        password
+      });
 
-    if (!res.success) {
-      setErrorMsg(res.message);
-      return;
+      // ALWAYS transition immediately to the OTP Verification step
+      setEnteredOtp('');
+      setRegStep('otp_verify');
+      setResendTimer(60);
+      savePendingOtpState(cleanEmail, cleanName, cleanPhone, cleanAddress, 'otp_verify');
+
+      if (!signUpRes.success) {
+        console.warn('[AuthModal] signUp returned notice/warning:', signUpRes.message);
+        if (signUpRes.message?.toLowerCase().includes('already registered') || signUpRes.message?.toLowerCase().includes('already exists')) {
+          const resendResult = await sendEmailVerificationOTP(cleanEmail, cleanName);
+          setInfoMsg(resendResult.message);
+        } else {
+          setErrorMsg(signUpRes.message || `Verification code sent to ${cleanEmail}. Check your inbox.`);
+        }
+      } else {
+        console.log('[AuthModal] User created in auth.users, Signup OTP email dispatched. Transitioning to otp_verify screen.');
+        setInfoMsg(`Verification code sent to ${cleanEmail}. Check your inbox (and spam folder).`);
+      }
+    } catch (err: any) {
+      console.error('[AuthModal] Exception during signup OTP dispatch:', err);
+      setErrorMsg(err.message || 'Failed to dispatch verification code.');
+    } finally {
+      setIsSendingOtp(false);
     }
-
-    setInfoMsg('Account created successfully! Welcome to Trippy\'s Mehfill.');
-    setTimeout(() => {
-      onClose();
-    }, 800);
   };
 
   const handleResendOtp = async () => {
-    setErrorMsg('');
-    const result = await sendEmailVerificationOTP(email.trim().toLowerCase(), fullName.trim());
-    if (!result.success) {
-      setErrorMsg(result.message);
+    if (isSendingOtp || resendTimer > 0) {
+      console.log('[AuthModal] Blocked duplicate resend call: isSendingOtp=', isSendingOtp, 'resendTimer=', resendTimer);
       return;
     }
-    setResendTimer(60);
-    setInfoMsg(`New security OTP code sent to ${email}!`);
+
+    setErrorMsg('');
+    setInfoMsg('');
+    setIsSendingOtp(true);
+
+    try {
+      console.log('[AuthModal] Resending 6-digit OTP code to:', email);
+      const result = await sendEmailVerificationOTP(email.trim().toLowerCase(), fullName.trim());
+      setResendTimer(60);
+      savePendingOtpState(email.trim().toLowerCase(), fullName.trim(), phone.trim(), hostelAddress.trim(), 'otp_verify');
+
+      if (!result.success) {
+        console.warn('[AuthModal] Resend OTP returned warning/error:', result.message);
+        setErrorMsg(result.message);
+      } else {
+        setInfoMsg(`New security OTP code sent to ${email}!`);
+      }
+    } catch (err: any) {
+      console.error('[AuthModal] Exception during resend OTP:', err);
+      setErrorMsg(err.message || 'Failed to resend code.');
+    } finally {
+      setIsSendingOtp(false);
+    }
   };
 
   // The event is optional so OtpInput can fire this the moment the sixth digit
@@ -293,59 +385,82 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     e?.preventDefault();
     if (isVerifyingOtp) return;
     setErrorMsg('');
+    setInfoMsg('');
+
+    if (isVerifyingOtp) {
+      console.log('[AuthModal] Blocked duplicate OTP verification submission');
+      return;
+    }
+
+    if (!enteredOtp.trim()) {
+      setErrorMsg('Please enter the 6-digit verification code sent to your email.');
+      return;
+    }
 
     setIsVerifyingOtp(true);
 
-    // Verifying the code with Supabase establishes the session that signUp then
-    // attaches the password and profile to.
-    const verification = await verifyEmailOTPCode(email, enteredOtp);
-    if (!verification.success) {
+    try {
+      console.log('[AuthModal] Step 3: Verifying OTP token for email:', email);
+      const verification = await verifyEmailOTPCode(email, enteredOtp);
+      if (!verification.success) {
+        console.warn('[AuthModal] OTP verification failed:', verification.message);
+        setIsVerifyingOtp(false);
+        setErrorMsg(verification.message);
+        return;
+      }
+
+      console.log('[AuthModal] Step 4: OTP token verified successfully. Completing user registration...');
+      const created = await signUp({
+        full_name: fullName,
+        phone,
+        hostel_address: hostelAddress,
+        email,
+        password
+      });
+
       setIsVerifyingOtp(false);
-      setErrorMsg(verification.message);
-      return;
+
+      if (!created.success) {
+        console.error('[AuthModal] Account creation after OTP verification failed:', created.message);
+        setErrorMsg(created.message || 'We could not finish creating your account. Please try again.');
+        return;
+      }
+
+      clearPendingOtpState();
+      console.log('[AuthModal] Step 5: Account & profile created. Auto-logging customer in.');
+
+      const newCustomer: UserProfile = {
+        id: 'c-' + Date.now(),
+        email: email.trim().toLowerCase(),
+        full_name: fullName.trim(),
+        phone: phone.trim(),
+        hostel_address: hostelAddress.trim(),
+        role: 'customer',
+        account_status: 'active',
+        is_whatsapp_verified: true, // Auto-verified for instant ordering
+        is_approved: true, // Auto-approved for instant ordering
+        is_active: true,
+        auth_provider: 'Email',
+        ip_address: ipAddress,
+        latitude: latitude || KITCHEN_LAT,
+        longitude: longitude || KITCHEN_LNG,
+        location_city: locationCity,
+        created_at: new Date().toLocaleString()
+      };
+
+      if (onRegisterSuccess) {
+        onRegisterSuccess(newCustomer);
+      }
+
+      setInfoMsg(created.message || 'Email verified and account created successfully!');
+      setTimeout(() => {
+        onClose();
+      }, 1000);
+    } catch (err: any) {
+      console.error('[AuthModal] Exception during OTP verification flow:', err);
+      setIsVerifyingOtp(false);
+      setErrorMsg(err.message || 'Verification failed.');
     }
-
-    const created = await signUp({
-      full_name: fullName,
-      phone,
-      hostel_address: hostelAddress,
-      email,
-      password
-    });
-
-    setIsVerifyingOtp(false);
-
-    if (!created.success) {
-      setErrorMsg(created.message || 'We could not finish creating your account. Please try again.');
-      return;
-    }
-
-    const newCustomer: UserProfile = {
-      id: 'c-' + Date.now(),
-      email: email.trim().toLowerCase(),
-      full_name: fullName.trim(),
-      phone: phone.trim(),
-      hostel_address: hostelAddress.trim(),
-      role: 'customer',
-      account_status: 'active',
-      is_approved: true, // Auto-approved for instant ordering
-      is_active: true,
-      auth_provider: 'Email',
-      ip_address: ipAddress,
-      latitude: latitude || KITCHEN_LAT,
-      longitude: longitude || KITCHEN_LNG,
-      location_city: locationCity,
-      created_at: new Date().toLocaleString()
-    };
-
-    if (onRegisterSuccess) {
-      onRegisterSuccess(newCustomer);
-    }
-
-    // verifyOtp already established the session, so the customer is signed in by
-    // this point. Close straight away and let them land on the menu rather than
-    // holding them on a success screen.
-    onClose();
   };
 
   const handleStartGoogleSignInFlow = () => {
@@ -1074,13 +1189,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <button
                 type="submit"
-                disabled={isLocating}
+                disabled={isLocating || isSendingOtp}
                 className="w-full py-3 bg-orange-600 hover:bg-orange-700 text-white font-black rounded-xl shadow-lg shadow-orange-600/30 transition text-xs flex items-center justify-center gap-2 disabled:opacity-50"
               >
-                {isLocating ? (
+                {isLocating || isSendingOtp ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Processing...</span>
+                    <span>{isSendingOtp ? 'Sending OTP Verification Code...' : 'Processing...'}</span>
                   </>
                 ) : (
                   <>
@@ -1152,9 +1267,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <button
                     type="button"
                     onClick={handleResendOtp}
-                    className="text-orange-400 font-bold hover:underline flex items-center gap-1"
+                    disabled={isSendingOtp}
+                    className="text-orange-400 font-bold hover:underline flex items-center gap-1 disabled:opacity-50"
                   >
-                    <RefreshCw className="w-3 h-3" /> Resend Code
+                    <RefreshCw className={`w-3 h-3 ${isSendingOtp ? 'animate-spin' : ''}`} />
+                    <span>{isSendingOtp ? 'Sending...' : 'Resend Code'}</span>
                   </button>
                 )}
               </div>
@@ -1175,6 +1292,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <span>Verify & Complete Registration</span>
                   </>
                 )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRegStep('form')}
+                className="w-full py-1.5 text-xs text-gray-400 hover:text-white transition"
+              >
+                ← Back / Edit Registration Details
               </button>
             </form>
           )}
