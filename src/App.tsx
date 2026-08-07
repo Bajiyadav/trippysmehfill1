@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CartProvider, useCart } from './context/CartContext';
+import { ToastProvider, useToast } from './context/ToastContext';
 import { Header } from './components/common/Header';
 import { NotificationBanner } from './components/common/NotificationBanner';
 import { HeroSection } from './components/customer/HeroSection';
@@ -35,6 +36,9 @@ import { GallerySection } from './components/customer/GallerySection';
 import { OffersSection } from './components/customer/OffersSection';
 import { RightOrderPanel } from './components/customer/RightOrderPanel';
 import { CheckoutView } from './components/customer/CheckoutView';
+import { MyOrdersView } from './components/customer/MyOrdersView';
+import { ToastHost } from './components/common/ToastHost';
+import { statusToastCopy } from './lib/orderStatus';
 import { AdminGuardView } from './components/admin/AdminGuardView';
 
 // Driver Component
@@ -66,10 +70,11 @@ import {
 function MainApp() {
   const { user } = useAuth();
   const { cart } = useCart();
+  const { showToast } = useToast();
   const cartItemCount = cart.length;
   
   // Navigation & Tabs
-  const [activeSection, setActiveSection] = useState<'menu' | 'checkout' | 'track' | 'admin' | 'kitchen' | 'driver'>('menu');
+  const [activeSection, setActiveSection] = useState<'menu' | 'checkout' | 'orders' | 'track' | 'admin' | 'kitchen' | 'driver'>('menu');
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
 
   // Customer View Filters
@@ -95,6 +100,11 @@ function MainApp() {
   const [authModalTab, setAuthModalTab] = useState<'signin' | 'register'>('signin');
   const [activeTrackingOrder, setActiveTrackingOrder] = useState<Order | null>(null);
   const [feedbackOrder, setFeedbackOrder] = useState<Order | null>(null);
+
+  // Last status each of the customer's orders was observed in, so status toasts
+  // fire on transitions rather than on every refetch.
+  const seenOrderStatuses = useRef<Map<string, OrderStatus>>(new Map());
+  const hasSeededOrderStatuses = useRef(false);
 
   // Load live data from Supabase Services
   const loadAllSupabaseData = async () => {
@@ -170,6 +180,43 @@ function MainApp() {
       realtimeService.unsubscribe(inventoryChannel);
     };
   }, [user?.id]);
+
+  // Toast the customer when one of their own orders moves on. Keyed by
+  // order+status so a refetch that returns the same rows does not re-announce
+  // what they have already been told.
+  useEffect(() => {
+    if (!user || user.role !== 'customer') return;
+
+    const seen = seenOrderStatuses.current;
+    const mine = orders.filter(o => o.customer_id === user.id);
+
+    // The first pass after signing in records where each order already stands
+    // without announcing it. Otherwise opening the app would fire "Delivered"
+    // for every order the customer has ever received.
+    if (!hasSeededOrderStatuses.current) {
+      for (const order of mine) seen.set(order.id, order.status);
+      hasSeededOrderStatuses.current = true;
+      return;
+    }
+
+    for (const order of mine) {
+      const previous = seen.get(order.id);
+      seen.set(order.id, order.status);
+
+      // A brand new order announces itself from the checkout page, not here.
+      if (previous === undefined || previous === order.status) continue;
+
+      const copy = statusToastCopy(order.status);
+      if (!copy) continue;
+
+      showToast({
+        title: copy.title,
+        description: `${order.order_number} — ${copy.description}`,
+        tone: order.status === 'cancelled' ? 'error' : 'success',
+        key: `status-${order.id}-${order.status}`
+      });
+    }
+  }, [orders, user, showToast]);
 
   // Live tracking: the tracker holds the order it was opened with, which would
   // otherwise stay frozen at the status it had at that moment. Re-read it from
@@ -356,7 +403,10 @@ function MainApp() {
         activeSection={activeSection}
         setActiveSection={setActiveSection}
         onOpenCart={() => setIsCartOpen(true)}
-        onOpenOrders={() => setIsCustomerDashboardOpen(true)}
+        onOpenOrders={() => {
+          setActiveSection('orders');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
         onOpenCustomerDashboard={() => setIsCustomerDashboardOpen(true)}
         onLogoClick={handleLogoClick}
         onOpenAuth={(tab = 'signin') => {
@@ -491,6 +541,26 @@ function MainApp() {
           onTrackOrder={(order) => setActiveTrackingOrder(order)}
           onBackToMenu={() => {
             setActiveSection('menu');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        />
+      )}
+
+      {/* 1c. MY ORDERS (signed-in customers only) */}
+      {activeSection === 'orders' && user && (
+        <MyOrdersView
+          orders={orders.filter(o => o.customer_id === user.id)}
+          menuItems={menuItems}
+          onTrackOrder={(order) => setActiveTrackingOrder(order)}
+          onOrderCancelled={(orderId) =>
+            setOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status: 'cancelled' } : o)))
+          }
+          onBackToMenu={() => {
+            setActiveSection('menu');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          onGoToCheckout={() => {
+            setActiveSection('checkout');
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
         />
@@ -734,7 +804,10 @@ export default function App() {
   return (
     <AuthProvider>
       <CartProvider>
-        <AppGate />
+        <ToastProvider>
+          <AppGate />
+          <ToastHost />
+        </ToastProvider>
       </CartProvider>
     </AuthProvider>
   );

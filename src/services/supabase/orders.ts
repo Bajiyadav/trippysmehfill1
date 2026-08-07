@@ -183,6 +183,34 @@ export const ordersService = {
     }
   },
 
+  /**
+   * Customer-initiated cancellation.
+   *
+   * The `status` guard is repeated in the WHERE clause rather than trusted to
+   * the UI: between the button rendering and this call, the kitchen may have
+   * accepted and started cooking. `select()` returning zero rows means the
+   * order moved on (or RLS refused), which is reported rather than swallowed.
+   *
+   * Requires migration 0006 -- customers have no UPDATE policy without it.
+   */
+  async cancelOrder(orderId: string): Promise<void> {
+    const { data, error } = await supabase
+      .from('orders')
+      .update({ status: 'cancelled' })
+      .eq('id', orderId)
+      .in('status', ['pending', 'accepted'])
+      .select('id');
+
+    if (error) {
+      console.error('Error cancelling order:', error);
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      throw new Error('This order can no longer be cancelled — the kitchen has already started preparing it.');
+    }
+  },
+
   /** Single order by id, used by live tracking to poll a fresh status. */
   async fetchOrderById(orderId: string): Promise<Order | null> {
     const { data, error } = await supabase
