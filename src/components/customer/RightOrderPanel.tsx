@@ -27,12 +27,22 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
   const { user } = useAuth();
 
   const [deliveryAddress, setDeliveryAddress] = useState(user?.hostel_address || 'Main Campus Hostel, Block B Room 204');
-  const [landmark, setLandmark] = useState('');
+  const [landmark, setLandmark] = useState(user?.landmark || '');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('COD');
   const [upiTxnId, setUpiTxnId] = useState('');
   const [isPlacing, setIsPlacing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [placedOrderSuccess, setPlacedOrderSuccess] = useState<Order | null>(null);
+
+  // Auto-update default delivery address whenever user profile changes or updates
+  React.useEffect(() => {
+    if (user?.hostel_address) {
+      setDeliveryAddress(user.hostel_address);
+    }
+    if (user?.landmark) {
+      setLandmark(user.landmark);
+    }
+  }, [user]);
 
   const isMinOrderMet = subtotal >= settings.min_order_value;
 
@@ -72,8 +82,8 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
     const nextSeq = Math.max(maxNum + 1, 1005);
     const newOrderNumber = `#${nextSeq}`;
 
-    const newOrder: Order = {
-      id: 'ord-' + Date.now(),
+    // Payload for Supabase insert - DO NOT pass string 'ord-...' as id (PostgreSQL column id is UUID)
+    const orderPayload = {
       order_number: newOrderNumber,
       customer_id: user.id,
       customer_name: user.full_name,
@@ -115,11 +125,13 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
       created_at: new Date().toLocaleString()
     };
 
+    let newOrder: Order;
+
     if (isSupabaseConfigured) {
       try {
         const { data: insertedOrder, error: insertError } = await supabase
           .from('orders')
-          .insert([newOrder])
+          .insert([orderPayload])
           .select()
           .single();
 
@@ -127,12 +139,19 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
           console.error('Failed to sync order to Supabase:', insertError.message);
           throw new Error(insertError.message);
         }
+
+        newOrder = insertedOrder as Order;
       } catch (err: any) {
         console.error('Order database insert error:', err);
         setErrorMsg(`Order creation failed: ${err?.message || 'Database error'}`);
         setIsPlacing(false);
         return;
       }
+    } else {
+      newOrder = {
+        ...orderPayload,
+        id: crypto.randomUUID()
+      } as Order;
     }
 
     // Play kitchen alert chime

@@ -108,12 +108,60 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
   const [editAddress, setEditAddress] = useState(user?.hostel_address || '');
   const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
 
+  // Editable Address state
+  const [isEditingAddress, setIsEditingAddress] = useState(false);
+  const [hostelName, setHostelName] = useState(user?.hostel_name || 'GD Goenka University Campus');
+  const [roomNumber, setRoomNumber] = useState(user?.room_number || '');
+  const [towerBlock, setTowerBlock] = useState(user?.tower_block || '');
+  const [addressLandmark, setAddressLandmark] = useState(user?.landmark || '');
+  const [deliveryNotes, setDeliveryNotes] = useState(user?.delivery_notes || '');
+  const [isDefaultAddress, setIsDefaultAddress] = useState(true);
+  const [addressSuccessMsg, setAddressSuccessMsg] = useState<string | null>(null);
+  const [isSavingAddress, setIsSavingAddress] = useState(false);
+
   if (!isOpen || !user) return null;
 
   // Show quick toast notification
   const triggerToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleSaveAddress = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAddressSuccessMsg(null);
+    setIsSavingAddress(true);
+
+    try {
+      const fullAddressParts = [];
+      if (hostelName.trim()) fullAddressParts.push(hostelName.trim());
+      if (towerBlock.trim()) fullAddressParts.push(towerBlock.trim());
+      if (roomNumber.trim()) fullAddressParts.push(`Room ${roomNumber.trim()}`);
+      if (addressLandmark.trim()) fullAddressParts.push(`Landmark: ${addressLandmark.trim()}`);
+      if (deliveryNotes.trim()) fullAddressParts.push(`Notes: ${deliveryNotes.trim()}`);
+
+      const fullHostelAddress = fullAddressParts.length > 0
+        ? fullAddressParts.join(', ')
+        : 'Goenka University Campus - Hostel Gate 5';
+
+      await updateProfile({
+        hostel_address: fullHostelAddress,
+        hostel_name: hostelName,
+        room_number: roomNumber,
+        tower_block: towerBlock,
+        landmark: addressLandmark,
+        delivery_notes: deliveryNotes,
+        is_default_address: isDefaultAddress
+      });
+
+      setAddressSuccessMsg('✅ Default delivery address updated successfully! Future orders will automatically use this address.');
+      triggerToast('Default Address Saved!');
+      setIsEditingAddress(false);
+    } catch (err: any) {
+      alert('Failed to save delivery address: ' + (err?.message || 'Error occurred'));
+    } finally {
+      setIsSavingAddress(false);
+    }
   };
 
   // Filter orders for current user
@@ -268,7 +316,6 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
   };
 
   const strength = getPasswordStrength(newPassInput);
-  const currentDisplayedPassword = user.password || 'TrippyPass2026!';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-2 sm:p-6 overflow-y-auto">
@@ -818,24 +865,203 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
             </div>
           )}
 
-          {/* TAB 6: ADDRESSES */}
+          {/* TAB 6: ADDRESSES (DELIVERY LOCATION MANAGEMENT) */}
           {activeTab === 'addresses' && (
-            <div className="space-y-4">
-              <div className="bg-[#181818] p-5 rounded-3xl border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
+            <div className="space-y-5">
+              
+              {/* Success Notification Banner */}
+              {addressSuccessMsg && (
+                <div className="p-4 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs rounded-2xl flex items-center justify-between gap-3 font-bold animate-in fade-in">
                   <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-orange-400" />
-                    <h4 className="font-extrabold text-white text-sm">Primary Campus Address</h4>
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                    <span>{addressSuccessMsg}</span>
                   </div>
-                  <span className="px-2.5 py-0.5 rounded-full bg-[#C5A059]/20 text-[#C5A059] text-[10px] font-black uppercase">Default</span>
+                  <button
+                    onClick={() => setAddressSuccessMsg(null)}
+                    className="text-gray-400 hover:text-white p-1"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <p className="text-xs text-gray-300 font-medium">{user.hostel_address || 'Goenka University Campus - Hostel Gate 5'}</p>
-                {user.latitude && user.longitude && (
-                  <p className="text-[10px] text-gray-400 font-mono">
-                    GPS Lat: {user.latitude}, Lng: {user.longitude}
+              )}
+
+              {/* CURRENT DEFAULT ADDRESS CARD */}
+              <div className="bg-[#181818] p-5 sm:p-6 rounded-3xl border border-white/10 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-2xl bg-orange-600/20 text-orange-400 border border-orange-500/30">
+                      <MapPin className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-white text-base font-serif">Default Delivery Address</h4>
+                      <p className="text-[11px] text-gray-400">Used automatically for all upcoming food orders.</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-1 rounded-full bg-[#C5A059]/20 text-[#C5A059] text-[10px] font-black uppercase border border-[#C5A059]/30">
+                      Default Address
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingAddress(!isEditingAddress)}
+                      className="px-3.5 py-1.5 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold text-xs rounded-xl shadow-md transition flex items-center gap-1.5"
+                    >
+                      <span>{isEditingAddress ? 'Cancel' : '✏️ Edit Address'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Display Current Address Details */}
+                <div className="space-y-2 text-xs">
+                  <p className="text-gray-200 font-extrabold text-sm leading-relaxed">
+                    {user.hostel_address || 'GD Goenka University Campus - Hostel Gate 5'}
                   </p>
-                )}
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-[11px] text-gray-400">
+                    <div className="bg-[#0d0d0d] p-2.5 rounded-xl border border-white/5">
+                      <span className="text-gray-500 font-bold block">Hostel / Campus:</span>
+                      <span className="text-white font-medium">{user.hostel_name || 'GD Goenka Campus Hostel'}</span>
+                    </div>
+                    <div className="bg-[#0d0d0d] p-2.5 rounded-xl border border-white/5">
+                      <span className="text-gray-500 font-bold block">Room & Tower:</span>
+                      <span className="text-white font-medium">
+                        {user.room_number ? `Room ${user.room_number}` : 'N/A'}{user.tower_block ? `, ${user.tower_block}` : ''}
+                      </span>
+                    </div>
+                    {user.landmark && (
+                      <div className="bg-[#0d0d0d] p-2.5 rounded-xl border border-white/5">
+                        <span className="text-gray-500 font-bold block">Landmark:</span>
+                        <span className="text-amber-300 font-medium">{user.landmark}</span>
+                      </div>
+                    )}
+                    {user.delivery_notes && (
+                      <div className="bg-[#0d0d0d] p-2.5 rounded-xl border border-white/5">
+                        <span className="text-gray-500 font-bold block">Delivery Notes:</span>
+                        <span className="text-gray-300 italic">{user.delivery_notes}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {user.latitude && user.longitude && (
+                    <p className="text-[10px] text-emerald-400 font-mono pt-1">
+                      📍 Verified GPS Coordinates: {user.latitude}, {user.longitude}
+                    </p>
+                  )}
+                </div>
               </div>
+
+              {/* EDIT ADDRESS FORM */}
+              {isEditingAddress && (
+                <form onSubmit={handleSaveAddress} className="bg-[#181818] p-5 sm:p-6 rounded-3xl border border-[#C5A059]/40 space-y-4 animate-in fade-in">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                    <h4 className="font-extrabold text-white text-base font-serif flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-[#C5A059]" />
+                      <span>Update Delivery Location Details</span>
+                    </h4>
+                    <span className="text-xs text-gray-400 font-medium">Auto-saves to Supabase profile</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    
+                    {/* Hostel / Campus */}
+                    <div>
+                      <label className="font-bold text-gray-300 block mb-1">Hostel / Building Name *</label>
+                      <input
+                        type="text"
+                        value={hostelName}
+                        onChange={(e) => setHostelName(e.target.value)}
+                        placeholder="e.g. GD Goenka Hostel / Boys Hostel 2"
+                        className="w-full p-3 bg-[#0d0d0d] border border-white/15 rounded-xl text-white outline-none focus:border-[#C5A059]"
+                        required
+                      />
+                    </div>
+
+                    {/* Room Number */}
+                    <div>
+                      <label className="font-bold text-gray-300 block mb-1">Room Number *</label>
+                      <input
+                        type="text"
+                        value={roomNumber}
+                        onChange={(e) => setRoomNumber(e.target.value)}
+                        placeholder="e.g. Room 304"
+                        className="w-full p-3 bg-[#0d0d0d] border border-white/15 rounded-xl text-white outline-none focus:border-[#C5A059]"
+                        required
+                      />
+                    </div>
+
+                    {/* Tower / Block */}
+                    <div>
+                      <label className="font-bold text-gray-300 block mb-1">Tower / Block (Optional)</label>
+                      <input
+                        type="text"
+                        value={towerBlock}
+                        onChange={(e) => setTowerBlock(e.target.value)}
+                        placeholder="e.g. Block B / Tower 3"
+                        className="w-full p-3 bg-[#0d0d0d] border border-white/15 rounded-xl text-white outline-none focus:border-[#C5A059]"
+                      />
+                    </div>
+
+                    {/* Landmark */}
+                    <div>
+                      <label className="font-bold text-gray-300 block mb-1">Landmark (Optional)</label>
+                      <input
+                        type="text"
+                        value={addressLandmark}
+                        onChange={(e) => setAddressLandmark(e.target.value)}
+                        placeholder="e.g. Near Gate 5 Canteen / Opposite Library"
+                        className="w-full p-3 bg-[#0d0d0d] border border-white/15 rounded-xl text-white outline-none focus:border-[#C5A059]"
+                      />
+                    </div>
+
+                    {/* Delivery Notes */}
+                    <div className="sm:col-span-2">
+                      <label className="font-bold text-gray-300 block mb-1">Delivery Instructions / Notes (Optional)</label>
+                      <input
+                        type="text"
+                        value={deliveryNotes}
+                        onChange={(e) => setDeliveryNotes(e.target.value)}
+                        placeholder="e.g. Please call when arriving at gate, do not ring bell late night"
+                        className="w-full p-3 bg-[#0d0d0d] border border-white/15 rounded-xl text-white outline-none focus:border-[#C5A059]"
+                      />
+                    </div>
+
+                    {/* Default Address Checkbox */}
+                    <div className="sm:col-span-2 flex items-center gap-2 pt-1">
+                      <input
+                        type="checkbox"
+                        id="isDefaultCheckbox"
+                        checked={isDefaultAddress}
+                        onChange={(e) => setIsDefaultAddress(e.target.checked)}
+                        className="w-4 h-4 accent-[#C5A059] rounded cursor-pointer"
+                      />
+                      <label htmlFor="isDefaultCheckbox" className="text-xs text-gray-300 font-bold cursor-pointer">
+                        Set as Default Address for all future orders
+                      </label>
+                    </div>
+
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-2">
+                    <button
+                      type="submit"
+                      disabled={isSavingAddress}
+                      className="flex-1 py-3 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold rounded-2xl shadow-lg transition flex items-center justify-center gap-2 text-xs"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>{isSavingAddress ? 'Saving Address...' : 'Save & Set as Default Address'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingAddress(false)}
+                      className="px-5 py-3 bg-white/10 hover:bg-white/20 text-gray-300 hover:text-white font-bold rounded-2xl transition text-xs"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+
             </div>
           )}
 
@@ -922,10 +1148,10 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
 
                     <div className="flex items-center justify-between gap-3 bg-black/60 p-2.5 rounded-xl border border-white/10 font-mono">
                       <span className="text-sm font-black text-amber-300 tracking-wider">
-                        {showCurrentPassword ? currentDisplayedPassword : '••••••••••••'}
+                        {user.password ? (showCurrentPassword ? user.password : '••••••••••••') : '••••••••••••'}
                       </span>
                       <span className="text-[10px] text-gray-400">
-                        {user.password ? 'Custom Password Saved' : 'Default Credentials'}
+                        {user.password ? 'Custom Password Saved' : 'Secured via Auth'}
                       </span>
                     </div>
                   </div>

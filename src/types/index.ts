@@ -6,6 +6,12 @@ export interface UserProfile {
   full_name: string;
   phone: string;
   hostel_address?: string;
+  hostel_name?: string;
+  room_number?: string;
+  tower_block?: string;
+  landmark?: string;
+  delivery_notes?: string;
+  is_default_address?: boolean;
   role: UserRole;
   account_status?: 'active' | 'pending_verification' | 'blocked_fraud';
   is_whatsapp_verified?: boolean;

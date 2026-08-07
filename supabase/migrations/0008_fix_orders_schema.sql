@@ -55,5 +55,13 @@ CREATE INDEX IF NOT EXISTS idx_orders_order_number ON public.orders(order_number
 CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON public.orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(status);
 
+-- Ensure profile address fields exist
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS hostel_name text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS room_number text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS tower_block text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS landmark text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS delivery_notes text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_default_address boolean DEFAULT true;
+
 -- Reload PostgREST schema cache automatically
 NOTIFY pgrst, 'reload schema';
