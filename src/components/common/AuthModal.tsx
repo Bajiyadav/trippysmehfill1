@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { X, Lock, Mail, User, Phone, MapPin, AlertCircle, ShieldCheck, Key, RefreshCw, CheckCircle, Navigation, ShieldAlert } from 'lucide-react';
 import { UserProfile } from '../../types';
 import { sendEmailVerificationOTP, verifyEmailOTPCode, sendPasswordResetOTP, resetPasswordWithOTP } from '../../lib/emailService';
+import OtpInput from './OtpInput';
 import { validateRegistration, validateEmail, validateFullName, validatePhone, validateAddress } from '../../lib/validation';
 import { requestValidatedLocation, KITCHEN_LAT, KITCHEN_LNG, MAX_SERVICE_RADIUS_KM } from '../../lib/geoUtils';
 
@@ -71,16 +72,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setActiveTab(defaultTab);
   }, [defaultTab, isOpen]);
 
-  // Resend Timer countdown
+  // Resend Timer countdown. Every OTP screen sets resendTimer, so the countdown
+  // is driven by the timer alone -- gating it on regStep left the Google and
+  // password-reset screens stuck at 60s with the resend link never appearing.
   useEffect(() => {
-    let interval: any = null;
-    if (regStep === 'otp_verify' && resendTimer > 0) {
-      interval = setInterval(() => {
-        setResendTimer(prev => prev - 1);
-      }, 1000);
-    }
+    if (resendTimer <= 0) return;
+    const interval = setInterval(() => {
+      setResendTimer(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
     return () => clearInterval(interval);
-  }, [regStep, resendTimer]);
+  }, [resendTimer > 0]);
 
   if (!isOpen) return null;
 
@@ -266,8 +267,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setInfoMsg(`New security OTP code sent to ${email}!`);
   };
 
-  const handleVerifyOtpSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // The event is optional so OtpInput can fire this the moment the sixth digit
+  // lands, without the user reaching for the button.
+  const handleVerifyOtpSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (isVerifyingOtp) return;
     setErrorMsg('');
 
     setIsVerifyingOtp(true);
@@ -392,8 +396,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setInfoMsg(result.message);
   };
 
-  const handleVerifyGoogleOtpSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleVerifyGoogleOtpSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (isVerifyingOtp) return;
     setErrorMsg('');
 
     const cleanEmail = googleEmailInput.trim().toLowerCase();
@@ -690,18 +695,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-xs font-bold text-gray-300 mb-1">
                       Enter Google OTP *
                     </label>
-                    <div className="relative">
-                      <Key className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        maxLength={8}
-                        value={enteredOtp}
-                        onChange={(e) => setEnteredOtp(e.target.value)}
-                        required
-                        placeholder="OTP Code"
-                        className="w-full pl-9 pr-3 py-3 bg-[#181818] border border-white/10 rounded-xl text-center text-lg font-mono tracking-widest text-orange-400 font-black outline-none focus:border-orange-500"
-                      />
-                    </div>
+                    <OtpInput
+                      value={enteredOtp}
+                      onChange={setEnteredOtp}
+                      onComplete={() => handleVerifyGoogleOtpSubmit()}
+                      disabled={isVerifyingOtp}
+                      hasError={!!errorMsg}
+                      autoFocus
+                      label="Google verification code"
+                    />
                   </div>
 
                   <button
@@ -802,18 +804,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <label className="block text-xs font-bold text-gray-300 mb-1">
                   Enter Verification OTP Code *
                 </label>
-                <div className="relative">
-                  <Key className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    maxLength={8}
-                    value={enteredOtp}
-                    onChange={(e) => setEnteredOtp(e.target.value)}
-                    required
-                    placeholder="Enter Code"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-center text-base font-mono tracking-widest text-orange-400 font-black outline-none focus:border-orange-500"
-                  />
-                </div>
+                {/* No onComplete here -- the same form still needs the new password,
+                    so submitting on the sixth digit would fire too early. */}
+                <OtpInput
+                  value={enteredOtp}
+                  onChange={setEnteredOtp}
+                  disabled={isResettingPassword}
+                  hasError={!!errorMsg}
+                  autoFocus
+                  label="Password reset code"
+                />
               </div>
 
               <div>
@@ -1092,18 +1092,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <label className="block text-xs font-bold text-gray-300 mb-1">
                   Enter Email OTP Code *
                 </label>
-                <div className="relative">
-                  <Key className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    maxLength={8}
-                    value={enteredOtp}
-                    onChange={(e) => setEnteredOtp(e.target.value)}
-                    required
-                    placeholder="Enter Code"
-                    className="w-full pl-9 pr-3 py-3 bg-[#181818] border border-white/10 rounded-xl text-center text-lg font-mono tracking-widest text-orange-400 font-black outline-none focus:border-orange-500"
-                  />
-                </div>
+                <OtpInput
+                  value={enteredOtp}
+                  onChange={setEnteredOtp}
+                  onComplete={() => handleVerifyOtpSubmit()}
+                  disabled={isVerifyingOtp}
+                  hasError={!!errorMsg}
+                  autoFocus
+                  label="Email verification code"
+                />
               </div>
 
               {/* Resend Timer & Button */}
