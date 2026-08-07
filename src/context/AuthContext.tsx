@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import type { Session } from '@supabase/supabase-js';
 import { UserProfile, UserRole } from '../types';
 import { supabase, isSupabaseConfigured, supabaseConfigError } from '../lib/supabase';
-import { initialStaffAndDrivers } from '../lib/initialData';
 import { validateRegistration } from '../lib/validation';
 import { toFriendlyAuthError, NOT_CONFIGURED_MESSAGE } from '../lib/authErrors';
 import { captureFullSecurityContext } from '../lib/geoUtils';
@@ -477,7 +476,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('[Auth] Demo role switching is disabled outside development.');
       return;
     }
-    const roleUser = initialStaffAndDrivers.find(u => u.role === role) || {
+    // Constructed inline rather than looked up in initialStaffAndDrivers.
+    // Referencing that array kept the whole seeded staff list -- real-looking
+    // names and phone numbers -- in the production bundle, even though this
+    // function never runs there.
+    const roleUser: UserProfile = {
       id: 'demo-' + role,
       email: `${role}@trippys.com`,
       full_name: `Demo ${role.toUpperCase()}`,

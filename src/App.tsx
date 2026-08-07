@@ -47,13 +47,8 @@ import { DriverView } from './components/driver/DriverView';
 
 import {
   initialMenuItems,
-  initialOrders,
-  initialPendingRegistrations,
-  initialStaffAndDrivers,
-  initialCustomers,
   initialGalleryItems,
   initialInventory,
-  initialFeedback,
   initialBanners
 } from './lib/initialData';
 import { AppSection, FoodCategory, MenuItem, Order, OrderStatus, PaymentStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner, GalleryItem } from './types';
@@ -85,13 +80,25 @@ function MainApp() {
 
   // App Data States (Initialized from initial data fallbacks, hydrated via Supabase)
   const [menuItems, setMenuItems] = useState<MenuItem[]>(initialMenuItems);
-  const [orders, setOrders] = useState<Order[]>(initialOrders);
-  const [pendingUsers, setPendingUsers] = useState<UserProfile[]>(initialPendingRegistrations);
-  const [staffList, setStaffList] = useState<UserProfile[]>(initialStaffAndDrivers);
-  const [customersList, setCustomersList] = useState<UserProfile[]>(initialCustomers);
+
+  // People and orders start EMPTY, never seeded.
+  //
+  // These were previously seeded from initialData, so before Supabase
+  // responded -- or whenever it failed to -- the admin dashboard, Live Orders,
+  // Kitchen and Payment Verification all displayed fabricated customers and
+  // orders: "Utfi - Keity", "Rakesh Ranjan", "Sajid", "Shruti". The owner saw
+  // orders that do not exist, and the kitchen could have tried to cook them.
+  //
+  // An empty list is the honest state before real data arrives. The menu keeps
+  // its fallback because that is the restaurant's own content, not a record of
+  // a person or a transaction.
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [pendingUsers, setPendingUsers] = useState<UserProfile[]>([]);
+  const [staffList, setStaffList] = useState<UserProfile[]>([]);
+  const [customersList, setCustomersList] = useState<UserProfile[]>([]);
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>(initialGalleryItems);
   const [inventory, setInventory] = useState<InventoryItem[]>(initialInventory);
-  const [feedback, setFeedback] = useState<Feedback[]>(initialFeedback);
+  const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [banners, setBanners] = useState<PromotionalBanner[]>(initialBanners);
 
   // Modals
