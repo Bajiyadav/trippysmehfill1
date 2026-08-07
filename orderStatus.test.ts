@@ -13,6 +13,8 @@ import {
   paymentToastCopy,
   awaitsPaymentVerification,
   buildTrackingTimeline,
+  normalizePaymentStatus,
+  PAYMENT_STATUS_VALUES,
   TRACKING_STAGES
 } from './src/lib/orderStatus';
 import { buildOrderShareText } from './src/lib/receipt';
@@ -101,6 +103,67 @@ test('payment label distinguishes cash on delivery from an unconfirmed transfer'
   assert.equal(paymentLabel({ payment_method: 'UPI', payment_status: 'completed' }), 'Payment Confirmed');
   assert.equal(paymentLabel({ payment_method: 'COD', payment_status: 'completed' }), 'Paid');
   assert.equal(paymentLabel({ payment_method: 'COD', payment_status: 'refunded' }), 'Refunded');
+});
+
+// --- payment status vocabulary ----------------------------------------------
+
+test('the canonical vocabulary is exactly what the database will accept', () => {
+  // Migration 0007: payment_status IN ('pending','completed','failed','refunded','rejected')
+  assert.deepEqual(
+    [...PAYMENT_STATUS_VALUES].sort(),
+    ['completed', 'failed', 'pending', 'refunded', 'rejected']
+  );
+});
+
+test('canonical values pass through normalisation unchanged', () => {
+  for (const value of PAYMENT_STATUS_VALUES) {
+    assert.equal(normalizePaymentStatus(value), value);
+  }
+});
+
+test("another client's vocabulary is translated, not dropped", () => {
+  // A parallel build settles UPI payments as 'paid' and holds them at
+  // 'pending_verification'. Those rows must read correctly here.
+  assert.equal(normalizePaymentStatus('paid'), 'completed');
+  assert.equal(normalizePaymentStatus('pending_verification'), 'pending');
+});
+
+test('a verified payment never reads as unpaid after normalisation', () => {
+  // The failure that matters most: showing a paying customer "Pending
+  // Verification" when the restaurant already confirmed their transfer.
+  for (const settled of ['paid', 'completed', 'success', 'successful', 'complete']) {
+    assert.equal(normalizePaymentStatus(settled), 'completed', `${settled} should read as settled`);
+  }
+});
+
+test('casing and stray whitespace do not defeat normalisation', () => {
+  assert.equal(normalizePaymentStatus('  PAID  '), 'completed');
+  assert.equal(normalizePaymentStatus('Pending_Verification'), 'pending');
+  assert.equal(normalizePaymentStatus('COMPLETED'), 'completed');
+});
+
+test('an unrecognised value falls back to pending, never to completed', () => {
+  // Safe direction: an unreadable status shows as awaiting review so a human
+  // looks at it. Defaulting to 'completed' would let a bad value mark an order
+  // paid on its own.
+  for (const junk of ['', '   ', 'weird', 'settled?', null, undefined, 42, {}, [], true]) {
+    assert.equal(
+      normalizePaymentStatus(junk as any), 'pending',
+      `unrecognised input should be pending: ${JSON.stringify(junk)}`
+    );
+  }
+});
+
+test('normalisation output is always renderable by the presentation helpers', () => {
+  const inputs = ['paid', 'pending_verification', 'declined', 'refund', 'nonsense', null, 7];
+  for (const raw of inputs) {
+    const status = normalizePaymentStatus(raw as any);
+    for (const payment_method of ['COD', 'UPI'] as const) {
+      const order = { payment_method, payment_status: status };
+      assert.ok(paymentLabel(order).length > 0, `no label for ${raw}`);
+      assert.ok(['success', 'pending', 'error', 'neutral'].includes(paymentTone(order)));
+    }
+  }
 });
 
 // --- Phase 3: admin payment verification ------------------------------------

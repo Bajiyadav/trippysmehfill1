@@ -7,7 +7,7 @@
  * Mapping happens here, once, so no component has to know about the split.
  */
 
-import { Order, OrderStatus } from '../types';
+import { Order, OrderStatus, PaymentStatus } from '../types';
 
 export type TrackingStage =
   | 'pending'
@@ -84,6 +84,71 @@ export function statusToastCopy(status: OrderStatus): { title: string; descripti
     default:
       return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Payment status vocabulary
+// ---------------------------------------------------------------------------
+
+/**
+ * The canonical payment_status values, and the only ones this application
+ * writes.
+ *
+ * This set is not a preference -- it is what the database will accept. Migration
+ * 0007 constrains the column to exactly these:
+ *
+ *   payment_status IN ('pending', 'completed', 'failed', 'refunded', 'rejected')
+ *
+ * Anything outside it is refused with a check violation, so writing 'paid' or
+ * 'pending_verification' would fail at the database regardless of what any
+ * client believes. See PAYMENT_STATUS_AUDIT.md.
+ */
+export const PAYMENT_STATUS_VALUES: readonly PaymentStatus[] = [
+  'pending',
+  'completed',
+  'rejected',
+  'failed',
+  'refunded'
+] as const;
+
+/**
+ * Non-canonical values that may appear in rows written by another client, and
+ * what they mean in canonical terms.
+ *
+ * A parallel build in this project settled UPI payments as 'paid' and held them
+ * at 'pending_verification'. Those rows must still read correctly here rather
+ * than falling through to a default and quietly showing the customer the wrong
+ * thing -- a payment that was verified must never display as unpaid.
+ */
+const LEGACY_PAYMENT_STATUS: Record<string, PaymentStatus> = {
+  paid: 'completed',
+  pending_verification: 'pending',
+  // Occasionally seen from gateways and hand-edits.
+  success: 'completed',
+  successful: 'completed',
+  complete: 'completed',
+  declined: 'rejected',
+  cancelled: 'failed',
+  refund: 'refunded'
+};
+
+/**
+ * Coerces whatever the database returned into a canonical PaymentStatus.
+ *
+ * Applied on every read. Unknown values fall back to 'pending', which is the
+ * safe direction: an unrecognised status shows as awaiting review, so a human
+ * looks at it. Defaulting to 'completed' would mean an unreadable value could
+ * silently mark an order paid.
+ */
+export function normalizePaymentStatus(raw: unknown): PaymentStatus {
+  if (typeof raw !== 'string') return 'pending';
+
+  const value = raw.trim().toLowerCase();
+  if ((PAYMENT_STATUS_VALUES as readonly string[]).includes(value)) {
+    return value as PaymentStatus;
+  }
+
+  return LEGACY_PAYMENT_STATUS[value] ?? 'pending';
 }
 
 /**

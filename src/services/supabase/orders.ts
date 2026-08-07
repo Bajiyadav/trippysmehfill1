@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import { Order, OrderItem, OrderStatus, PaymentMethod, PaymentStatus } from '../../types';
+import { normalizePaymentStatus } from '../../lib/orderStatus';
 
 /**
  * Line items live in the `orders.items` jsonb column.
@@ -58,7 +59,10 @@ function mapOrderRow(row: any): Order {
     delivery_fee: Number(row.delivery_fee),
     total_amount: Number(row.total_amount),
     payment_method: row.payment_method as PaymentMethod,
-    payment_status: row.payment_status as PaymentStatus,
+    // Normalised on read so a row written by another client -- which settles
+    // UPI payments as 'paid' -- still displays correctly here. Writes are
+    // always canonical. See PAYMENT_STATUS_AUDIT.md.
+    payment_status: normalizePaymentStatus(row.payment_status),
     upi_transaction_id: row.upi_transaction_id || undefined,
     payment_verified_at: row.payment_verified_at || undefined,
     payment_verified_by: row.payment_verified_by || undefined,
