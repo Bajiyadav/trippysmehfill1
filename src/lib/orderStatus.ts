@@ -91,12 +91,186 @@ export function statusToastCopy(status: OrderStatus): { title: string; descripti
  *
  * A UPI order sits at "Pending Verification" no matter what the customer has
  * done -- pressing "I've Paid" records a claim, it does not settle anything.
- * Only an admin confirming the transfer moves it to 'completed', and only then
- * does this say "Paid".
+ * Only a team member confirming the transfer moves it to 'completed', and only
+ * then does this say "Payment Confirmed".
  */
 export function paymentLabel(order: Pick<Order, 'payment_method' | 'payment_status'>): string {
-  if (order.payment_status === 'completed') return 'Paid';
-  if (order.payment_status === 'failed') return 'Payment failed';
-  if (order.payment_status === 'refunded') return 'Refunded';
-  return order.payment_method === 'COD' ? 'Pay on delivery' : 'Pending Verification';
+  switch (order.payment_status) {
+    case 'completed':
+      // Cash handed over at the door is "Paid"; a verified transfer is
+      // "Payment Confirmed", which is the wording the customer was promised
+      // while they were waiting for it.
+      return order.payment_method === 'COD' ? 'Paid' : 'Payment Confirmed';
+    case 'rejected':
+      return 'Payment Rejected';
+    case 'failed':
+      return 'Payment failed';
+    case 'refunded':
+      return 'Refunded';
+    default:
+      return order.payment_method === 'COD' ? 'Pay on delivery' : 'Pending Verification';
+  }
+}
+
+/**
+ * The line printed under the payment label. Only a rejection needs one: it is
+ * the single payment state the customer has to do something about, and telling
+ * them it was refused without telling them what to do next is a dead end.
+ */
+export function paymentNote(order: Pick<Order, 'payment_method' | 'payment_status'>): string | null {
+  if (order.payment_status === 'rejected') return 'Please contact the restaurant.';
+  if (order.payment_status === 'failed') return 'Please contact the restaurant.';
+  if (order.payment_status === 'pending' && order.payment_method !== 'COD') {
+    return 'We are checking your transfer. This usually takes a few minutes.';
+  }
+  return null;
+}
+
+export type PaymentTone = 'success' | 'pending' | 'error' | 'neutral';
+
+/** Colour intent for the payment label, so every screen agrees on it. */
+export function paymentTone(order: Pick<Order, 'payment_method' | 'payment_status'>): PaymentTone {
+  switch (order.payment_status) {
+    case 'completed': return 'success';
+    case 'rejected':
+    case 'failed':    return 'error';
+    case 'refunded':  return 'neutral';
+    default:          return order.payment_method === 'COD' ? 'neutral' : 'pending';
+  }
+}
+
+/**
+ * Toast copy for a payment that has just been settled by a team member.
+ * Returns null while nothing has been decided -- there is no news to announce.
+ */
+export function paymentToastCopy(
+  status: Order['payment_status']
+): { title: string; description: string; tone: 'success' | 'error' } | null {
+  switch (status) {
+    case 'completed':
+      return { title: 'Payment received and verified.', description: 'Your order is confirmed.', tone: 'success' };
+    case 'rejected':
+      return { title: 'Payment rejected.', description: 'Please contact the restaurant.', tone: 'error' };
+    case 'failed':
+      return { title: 'Payment failed.', description: 'Please contact the restaurant.', tone: 'error' };
+    case 'refunded':
+      return { title: 'Payment refunded.', description: 'The amount is on its way back to you.', tone: 'success' };
+    default:
+      return null;
+  }
+}
+
+/** True while a UPI order is waiting on someone to check the transfer. */
+export function awaitsPaymentVerification(
+  order: Pick<Order, 'payment_method' | 'payment_status'>
+): boolean {
+  return order.payment_method !== 'COD' && order.payment_status === 'pending';
+}
+
+// ---------------------------------------------------------------------------
+// Tracking timeline
+// ---------------------------------------------------------------------------
+
+export type TimelineState = 'done' | 'current' | 'upcoming' | 'failed';
+
+export interface TimelineStep {
+  key: string;
+  label: string;
+  blurb: string;
+  state: TimelineState;
+}
+
+/**
+ * The steps a customer sees while tracking an order.
+ *
+ * Payment steps appear only for UPI. A cash order has nothing to verify, so
+ * showing it "Payment Pending" would invent a wait that does not exist.
+ *
+ * A rejected payment marks its step 'failed' rather than removing it: the
+ * order still exists and the kitchen steps after it are still reachable once
+ * the customer sorts the payment out, so truncating the timeline there would
+ * misrepresent what happened.
+ */
+export function buildTrackingTimeline(
+  order: Pick<Order, 'payment_method' | 'payment_status' | 'status'>
+): TimelineStep[] {
+  const idx = trackingStageIndex(order.status);
+  const cancelled = order.status === 'cancelled';
+
+  // Position in the kitchen lifecycle: 0 placed, 1 accepted, 2 preparing,
+  // 3 out for delivery, 4 delivered.
+  const kitchen = (stepIndex: number): TimelineState => {
+    if (cancelled) return 'upcoming';
+    if (idx > stepIndex) return 'done';
+    if (idx === stepIndex) return 'current';
+    return 'upcoming';
+  };
+
+  const steps: TimelineStep[] = [
+    {
+      key: 'placed',
+      label: 'Order Placed',
+      blurb: 'We have your order.',
+      state: cancelled ? 'done' : 'done'
+    }
+  ];
+
+  if (order.payment_method !== 'COD') {
+    const settled = order.payment_status === 'completed';
+    const refused = order.payment_status === 'rejected' || order.payment_status === 'failed';
+
+    steps.push({
+      key: 'payment_pending',
+      label: 'Payment Pending',
+      blurb: settled || refused
+        ? 'Your transfer was reviewed.'
+        : 'We are checking your transfer.',
+      state: settled || refused ? 'done' : 'current'
+    });
+
+    steps.push({
+      key: 'payment_confirmed',
+      label: refused ? 'Payment Rejected' : 'Payment Confirmed',
+      blurb: refused
+        ? 'Please contact the restaurant.'
+        : settled
+          ? 'Payment received and verified.'
+          : 'Waiting for the restaurant to confirm.',
+      state: refused ? 'failed' : settled ? 'done' : 'upcoming'
+    });
+  }
+
+  steps.push(
+    {
+      key: 'preparing',
+      label: 'Preparing',
+      // 'accepted' is a real stored state but not a step of its own here, so
+      // it reads as the kitchen having started on this one.
+      blurb: idx === 1 ? 'The kitchen has accepted your order.' : 'Your food is being cooked fresh.',
+      state: idx === 1 && !cancelled ? 'current' : kitchen(2)
+    },
+    {
+      key: 'out_for_delivery',
+      label: 'Out for Delivery',
+      blurb: 'On the way to you.',
+      state: kitchen(3)
+    },
+    {
+      key: 'delivered',
+      label: 'Delivered',
+      blurb: 'Enjoy your meal!',
+      state: kitchen(4)
+    }
+  );
+
+  if (cancelled) {
+    steps.push({
+      key: 'cancelled',
+      label: 'Cancelled',
+      blurb: 'This order will not be delivered.',
+      state: 'failed'
+    });
+  }
+
+  return steps;
 }

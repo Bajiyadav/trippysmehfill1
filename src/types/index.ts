@@ -83,7 +83,14 @@ export type OrderStatus =
   | 'assigned'
   | 'out_for_delivery';
 export type PaymentMethod = 'COD' | 'UPI' | 'Card' | 'Razorpay';
-export type PaymentStatus = 'pending' | 'completed' | 'failed' | 'refunded';
+export type PaymentStatus =
+  | 'pending'
+  | 'completed'
+  // Refused by a team member after review -- the transfer never arrived, or did
+  // not match. Distinct from 'failed', which means a gateway declined it.
+  | 'rejected'
+  | 'failed'
+  | 'refunded';
 
 export interface OrderItem {
   dish_id: string;
@@ -109,6 +116,11 @@ export interface Order {
   payment_method: PaymentMethod;
   payment_status: PaymentStatus;
   upi_transaction_id?: string;
+  // Written by migration 0007's trigger when a team member settles the payment.
+  // Never sent from the client -- the server stamps who it actually saw.
+  payment_verified_at?: string;
+  payment_verified_by?: string;
+  payment_rejection_reason?: string;
   status: OrderStatus;
   driver_id?: string;
   driver_name?: string;

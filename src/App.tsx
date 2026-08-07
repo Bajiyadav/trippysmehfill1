@@ -19,6 +19,7 @@ import { ConfigErrorScreen, RequireRole } from './components/common/ProtectedRou
 import { AdminHeaderNav, AdminTab } from './components/admin/AdminHeaderNav';
 import { DashboardView } from './components/admin/DashboardView';
 import { LiveOrdersView } from './components/admin/LiveOrdersView';
+import { PaymentVerificationView } from './components/admin/PaymentVerificationView';
 import { KitchenView } from './components/admin/KitchenView';
 import { PendingRegistrationsView } from './components/admin/PendingRegistrationsView';
 import { MenuManagerView } from './components/admin/MenuManagerView';
@@ -38,7 +39,7 @@ import { RightOrderPanel } from './components/customer/RightOrderPanel';
 import { CheckoutView } from './components/customer/CheckoutView';
 import { MyOrdersView } from './components/customer/MyOrdersView';
 import { ToastHost } from './components/common/ToastHost';
-import { statusToastCopy } from './lib/orderStatus';
+import { statusToastCopy, paymentToastCopy } from './lib/orderStatus';
 import { AdminGuardView } from './components/admin/AdminGuardView';
 
 // Driver Component
@@ -55,7 +56,7 @@ import {
   initialFeedback,
   initialBanners
 } from './lib/initialData';
-import { FoodCategory, MenuItem, Order, OrderStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner, GalleryItem } from './types';
+import { FoodCategory, MenuItem, Order, OrderStatus, PaymentStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner, GalleryItem } from './types';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import {
   menuService,
@@ -105,6 +106,11 @@ function MainApp() {
   // fire on transitions rather than on every refetch.
   const seenOrderStatuses = useRef<Map<string, OrderStatus>>(new Map());
   const hasSeededOrderStatuses = useRef(false);
+
+  // Same, for payment settlement -- "Payment received and verified." must fire
+  // on the transition, not on every list refresh that still says 'completed'.
+  const seenPaymentStatuses = useRef<Map<string, PaymentStatus>>(new Map());
+  const hasSeededPaymentStatuses = useRef(false);
 
   // Load live data from Supabase Services
   const loadAllSupabaseData = async () => {
@@ -218,13 +224,59 @@ function MainApp() {
     }
   }, [orders, user, showToast]);
 
+  // The same treatment for payment settlement. Kept separate from the status
+  // effect because the two move independently: an admin can verify a transfer
+  // long before the kitchen accepts, and a customer needs to hear about each.
+  useEffect(() => {
+    if (!user || user.role !== 'customer') return;
+
+    const seen = seenPaymentStatuses.current;
+    const mine = orders.filter(o => o.customer_id === user.id);
+
+    // As above: the first pass records where things stand without announcing,
+    // otherwise every previously-verified order would toast on sign-in.
+    if (!hasSeededPaymentStatuses.current) {
+      for (const order of mine) seen.set(order.id, order.payment_status);
+      hasSeededPaymentStatuses.current = true;
+      return;
+    }
+
+    for (const order of mine) {
+      const previous = seen.get(order.id);
+      seen.set(order.id, order.payment_status);
+
+      if (previous === undefined || previous === order.payment_status) continue;
+
+      const copy = paymentToastCopy(order.payment_status);
+      if (!copy) continue;
+
+      showToast({
+        title: copy.title,
+        description: `${order.order_number} — ${copy.description}`,
+        tone: copy.tone,
+        key: `payment-${order.id}-${order.payment_status}`
+      });
+    }
+  }, [orders, user, showToast]);
+
   // Live tracking: the tracker holds the order it was opened with, which would
-  // otherwise stay frozen at the status it had at that moment. Re-read it from
-  // the realtime-updated list so the customer watches it progress.
+  // otherwise stay frozen at the moment it was opened. Re-read it from the
+  // realtime-updated list so the customer watches it progress.
+  //
+  // Compared field by field rather than by reference: `orders` is rebuilt on
+  // every refetch, so an identity check would reset state on each poll, and
+  // checking `status` alone would leave a payment verification invisible to
+  // anyone with the tracker already open -- which is the whole point of Phase 3.
   useEffect(() => {
     if (!activeTrackingOrder) return;
     const fresh = orders.find(o => o.id === activeTrackingOrder.id);
-    if (fresh && fresh.status !== activeTrackingOrder.status) {
+    if (!fresh) return;
+    if (
+      fresh.status !== activeTrackingOrder.status ||
+      fresh.payment_status !== activeTrackingOrder.payment_status ||
+      fresh.payment_rejection_reason !== activeTrackingOrder.payment_rejection_reason ||
+      fresh.driver_name !== activeTrackingOrder.driver_name
+    ) {
       setActiveTrackingOrder(fresh);
     }
   }, [orders, activeTrackingOrder]);
@@ -335,6 +387,24 @@ function MainApp() {
     }
   };
 
+  // Admin payment verification. The optimistic local write is only a latency
+  // hide -- the service resolves with the row the database actually stored, and
+  // that authoritative version replaces it. Realtime delivers the same change
+  // to every other client.
+  const applyOrderPatch = (updated: Order) => {
+    setOrders(prev => prev.map(o => (o.id === updated.id ? { ...o, ...updated } : o)));
+  };
+
+  const handleVerifyPayment = async (orderId: string) => {
+    const updated = await ordersService.verifyPayment(orderId);
+    applyOrderPatch(updated);
+  };
+
+  const handleRejectPayment = async (orderId: string, reason?: string) => {
+    const updated = await ordersService.rejectPayment(orderId, reason);
+    applyOrderPatch(updated);
+  };
+
   const handleApproveUser = async (userId: string) => {
     const userToApprove = pendingUsers.find(u => u.id === userId);
 
@@ -421,6 +491,9 @@ function MainApp() {
           activeTab={adminTab}
           setActiveTab={setAdminTab}
           pendingCount={pendingUsers.length}
+          pendingPaymentsCount={
+            orders.filter(o => o.payment_method === 'UPI' && o.payment_status === 'pending').length
+          }
         />
       )}
 
@@ -573,6 +646,13 @@ function MainApp() {
             {adminTab === 'dashboard' && <DashboardView orders={orders} feedback={feedback} />}
             {adminTab === 'live_orders' && (
               <LiveOrdersView orders={orders} drivers={drivers} onUpdateOrderStatus={handleUpdateOrderStatus} />
+            )}
+            {adminTab === 'payments' && (
+              <PaymentVerificationView
+                orders={orders}
+                onVerifyPayment={handleVerifyPayment}
+                onRejectPayment={handleRejectPayment}
+              />
             )}
             {adminTab === 'kitchen' && (
               <KitchenView orders={orders} onUpdateOrderStatus={handleUpdateOrderStatus} />

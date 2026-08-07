@@ -1,7 +1,16 @@
 import React from 'react';
-import { Order, OrderStatus } from '../../types';
+import { Order } from '../../types';
 import { X, MapPin, Phone } from 'lucide-react';
 import { OrderProgressTimeline } from './OrderProgressTimeline';
+import { statusLabel, paymentLabel, paymentNote, paymentTone } from '../../lib/orderStatus';
+import { estimatedDeliveryLabel } from '../../lib/checkout';
+
+const PAYMENT_TONE_CLASS: Record<string, string> = {
+  success: 'text-emerald-400',
+  pending: 'text-amber-400',
+  error: 'text-rose-400',
+  neutral: 'text-[#C5A059]'
+};
 
 interface OrderTrackerModalProps {
   order: Order | null;
@@ -17,6 +26,18 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
   onLeaveFeedback
 }) => {
   if (!isOpen || !order) return null;
+
+  const note = paymentNote(order);
+  const placedAt = new Date(order.created_at);
+  const deliveryEstimate = order.status === 'delivered'
+    ? 'Delivered'
+    : order.status === 'cancelled'
+      ? '—'
+      : Number.isNaN(placedAt.getTime())
+        // created_at is text in one of the two schemas, so it will not always
+        // parse. A duration alone is still true; an invented clock time is not.
+        ? '30 mins'
+        : estimatedDeliveryLabel(placedAt, 30);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
@@ -38,8 +59,39 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
 
         <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
 
+          {/* At-a-glance facts, before the timeline. Someone opening this wants
+              to know where the order stands without reading a diagram. */}
+          <dl className="grid grid-cols-2 gap-3">
+            <div className="bg-[#181818] rounded-2xl p-3.5 border border-white/10">
+              <dt className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Order Status</dt>
+              <dd className="text-sm font-black text-white mt-1">{statusLabel(order.status)}</dd>
+            </div>
+
+            <div className="bg-[#181818] rounded-2xl p-3.5 border border-white/10">
+              <dt className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Payment Status</dt>
+              <dd className={`text-sm font-black mt-1 ${PAYMENT_TONE_CLASS[paymentTone(order)]}`}>
+                {paymentLabel(order)}
+              </dd>
+            </div>
+
+            <div className="bg-[#181818] rounded-2xl p-3.5 border border-white/10 col-span-2">
+              <dt className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Estimated Delivery</dt>
+              <dd className="text-sm font-black text-white mt-1">{deliveryEstimate}</dd>
+            </div>
+          </dl>
+
+          {note && (
+            <p className={`text-xs -mt-3 ${
+              order.payment_status === 'rejected' || order.payment_status === 'failed'
+                ? 'text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3'
+                : 'text-gray-400'
+            }`}>
+              {note}
+            </p>
+          )}
+
           {/* Animated progress timeline (handles the cancelled state itself) */}
-          <OrderProgressTimeline status={order.status} />
+          <OrderProgressTimeline order={order} />
 
           {/* Delivery Details */}
           <div className="bg-[#181818] rounded-2xl p-4 border border-white/10 space-y-2 text-xs">

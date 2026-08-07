@@ -1,6 +1,50 @@
 import { supabase } from '../../lib/supabase';
 import { Order, OrderItem, OrderStatus, PaymentMethod, PaymentStatus } from '../../types';
 
+/**
+ * One place that turns an `orders` row (with its joined order_items) into an
+ * Order. Previously this mapping was written out three times, so a column
+ * added to one copy silently went missing from the others -- which is exactly
+ * what would have happened to the Phase 3 verification columns.
+ */
+function mapOrderRow(row: any): Order {
+  return {
+    id: row.id,
+    order_number: row.order_number,
+    customer_id: row.customer_id,
+    customer_name: row.customer_name,
+    customer_phone: row.customer_phone,
+    delivery_address: row.delivery_address,
+    landmark: row.landmark || undefined,
+    campus: row.campus || undefined,
+    items: (row.order_items || []).map((item: any) => ({
+      dish_id: item.dish_id || item.id,
+      dish_name: item.dish_name,
+      quantity: item.quantity,
+      price: Number(item.price),
+      is_veg: item.is_veg,
+    })),
+    subtotal: Number(row.subtotal),
+    tax_amount: Number(row.tax_amount),
+    delivery_fee: Number(row.delivery_fee),
+    total_amount: Number(row.total_amount),
+    payment_method: row.payment_method as PaymentMethod,
+    payment_status: row.payment_status as PaymentStatus,
+    upi_transaction_id: row.upi_transaction_id || undefined,
+    payment_verified_at: row.payment_verified_at || undefined,
+    payment_verified_by: row.payment_verified_by || undefined,
+    payment_rejection_reason: row.payment_rejection_reason || undefined,
+    status: row.status as OrderStatus,
+    driver_id: row.driver_id || undefined,
+    driver_name: row.driver_name || undefined,
+    driver_phone: row.driver_phone || undefined,
+    kitchen_notes: row.kitchen_notes || undefined,
+    rating: row.rating || undefined,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 export const ordersService = {
   async fetchOrders(): Promise<Order[]> {
     const { data: ordersData, error: ordersError } = await supabase
@@ -14,38 +58,7 @@ export const ordersService = {
       throw ordersError;
     }
 
-    return (ordersData || []).map((row) => ({
-      id: row.id,
-      order_number: row.order_number,
-      customer_id: row.customer_id,
-      customer_name: row.customer_name,
-      customer_phone: row.customer_phone,
-      delivery_address: row.delivery_address,
-      landmark: row.landmark || undefined,
-      campus: row.campus || undefined,
-      items: (row.order_items || []).map((item: any) => ({
-        dish_id: item.dish_id || item.id,
-        dish_name: item.dish_name,
-        quantity: item.quantity,
-        price: Number(item.price),
-        is_veg: item.is_veg,
-      })),
-      subtotal: Number(row.subtotal),
-      tax_amount: Number(row.tax_amount),
-      delivery_fee: Number(row.delivery_fee),
-      total_amount: Number(row.total_amount),
-      payment_method: row.payment_method as PaymentMethod,
-      payment_status: row.payment_status as PaymentStatus,
-      upi_transaction_id: row.upi_transaction_id || undefined,
-      status: row.status as OrderStatus,
-      driver_id: row.driver_id || undefined,
-      driver_name: row.driver_name || undefined,
-      driver_phone: row.driver_phone || undefined,
-      kitchen_notes: row.kitchen_notes || undefined,
-      rating: row.rating || undefined,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }));
+    return (ordersData || []).map(mapOrderRow);
   },
 
   async fetchCustomerOrders(customerId: string): Promise<Order[]> {
@@ -61,38 +74,7 @@ export const ordersService = {
       throw ordersError;
     }
 
-    return (ordersData || []).map((row) => ({
-      id: row.id,
-      order_number: row.order_number,
-      customer_id: row.customer_id,
-      customer_name: row.customer_name,
-      customer_phone: row.customer_phone,
-      delivery_address: row.delivery_address,
-      landmark: row.landmark || undefined,
-      campus: row.campus || undefined,
-      items: (row.order_items || []).map((item: any) => ({
-        dish_id: item.dish_id || item.id,
-        dish_name: item.dish_name,
-        quantity: item.quantity,
-        price: Number(item.price),
-        is_veg: item.is_veg,
-      })),
-      subtotal: Number(row.subtotal),
-      tax_amount: Number(row.tax_amount),
-      delivery_fee: Number(row.delivery_fee),
-      total_amount: Number(row.total_amount),
-      payment_method: row.payment_method as PaymentMethod,
-      payment_status: row.payment_status as PaymentStatus,
-      upi_transaction_id: row.upi_transaction_id || undefined,
-      status: row.status as OrderStatus,
-      driver_id: row.driver_id || undefined,
-      driver_name: row.driver_name || undefined,
-      driver_phone: row.driver_phone || undefined,
-      kitchen_notes: row.kitchen_notes || undefined,
-      rating: row.rating || undefined,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }));
+    return (ordersData || []).map(mapOrderRow);
   },
 
   async createOrder(orderInput: Omit<Order, 'id' | 'created_at'>): Promise<Order> {
@@ -184,6 +166,82 @@ export const ordersService = {
   },
 
   /**
+   * Admin: confirm that a UPI transfer actually arrived.
+   *
+   * This is the only path that sets payment_status = 'completed'. Nothing in
+   * the customer flow may call it -- pressing "I've Paid" records a claim, and
+   * a claim is not a settlement.
+   *
+   * `payment_verified_at` and `payment_verified_by` are deliberately NOT sent.
+   * Migration 0007's BEFORE UPDATE trigger stamps them from auth.uid(), so the
+   * audit trail records the actor the database saw rather than one the client
+   * asserted. Sending them here would be overwritten anyway.
+   *
+   * Authorisation is enforced twice over, in the database, not here:
+   *   - RLS ("Staff update orders" / orders_team_write) restricts UPDATE on
+   *     orders to team members;
+   *   - the 0007 trigger raises check_violation if a non-team member moves
+   *     payment_status off 'pending'.
+   * A client-side role check would be a convenience, not a control.
+   *
+   * The status guard is repeated in the WHERE clause: between the admin seeing
+   * the row and pressing the button, a colleague may have already settled it.
+   * Zero rows back means someone got there first (or RLS refused), which is
+   * reported rather than swallowed.
+   */
+  async verifyPayment(orderId: string): Promise<Order> {
+    const { data, error } = await supabase
+      .from('orders')
+      .update({ payment_status: 'completed', payment_rejection_reason: null })
+      .eq('id', orderId)
+      .eq('payment_status', 'pending')
+      .select('*, order_items(*)');
+
+    if (error) {
+      console.error('Error verifying payment:', error);
+      throw error;
+    }
+    if (!data || data.length === 0) {
+      throw new Error('This payment could not be verified — it may already have been reviewed by someone else.');
+    }
+
+    return mapOrderRow(data[0]);
+  },
+
+  /**
+   * Admin: refuse a UPI payment the restaurant never received.
+   *
+   * Leaves `status` alone. A rejected payment is not a cancelled order -- the
+   * customer may still pay by another means, and deciding to cancel is a
+   * separate call the admin makes deliberately.
+   *
+   * See verifyPayment above for why the audit columns are not sent from here.
+   */
+  async rejectPayment(orderId: string, reason?: string): Promise<Order> {
+    const trimmed = reason?.trim();
+
+    const { data, error } = await supabase
+      .from('orders')
+      .update({
+        payment_status: 'rejected',
+        payment_rejection_reason: trimmed ? trimmed : null,
+      })
+      .eq('id', orderId)
+      .eq('payment_status', 'pending')
+      .select('*, order_items(*)');
+
+    if (error) {
+      console.error('Error rejecting payment:', error);
+      throw error;
+    }
+    if (!data || data.length === 0) {
+      throw new Error('This payment could not be rejected — it may already have been reviewed by someone else.');
+    }
+
+    return mapOrderRow(data[0]);
+  },
+
+  /**
    * Customer-initiated cancellation.
    *
    * The `status` guard is repeated in the WHERE clause rather than trusted to
@@ -225,38 +283,7 @@ export const ordersService = {
     }
     if (!data) return null;
 
-    return {
-      id: data.id,
-      order_number: data.order_number,
-      customer_id: data.customer_id,
-      customer_name: data.customer_name,
-      customer_phone: data.customer_phone,
-      delivery_address: data.delivery_address,
-      landmark: data.landmark || undefined,
-      campus: data.campus || undefined,
-      items: (data.order_items || []).map((item: any) => ({
-        dish_id: item.dish_id || item.id,
-        dish_name: item.dish_name,
-        quantity: item.quantity,
-        price: Number(item.price),
-        is_veg: item.is_veg,
-      })),
-      subtotal: Number(data.subtotal),
-      tax_amount: Number(data.tax_amount),
-      delivery_fee: Number(data.delivery_fee),
-      total_amount: Number(data.total_amount),
-      payment_method: data.payment_method as PaymentMethod,
-      payment_status: data.payment_status as PaymentStatus,
-      upi_transaction_id: data.upi_transaction_id || undefined,
-      status: data.status as OrderStatus,
-      driver_id: data.driver_id || undefined,
-      driver_name: data.driver_name || undefined,
-      driver_phone: data.driver_phone || undefined,
-      kitchen_notes: data.kitchen_notes || undefined,
-      rating: data.rating || undefined,
-      created_at: data.created_at,
-      updated_at: data.updated_at,
-    };
+    return mapOrderRow(data);
   },
 
   async updateOrderStatus(orderId: string, status: OrderStatus): Promise<void> {

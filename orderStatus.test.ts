@@ -8,6 +8,11 @@ import {
   statusLabel,
   statusToastCopy,
   paymentLabel,
+  paymentNote,
+  paymentTone,
+  paymentToastCopy,
+  awaitsPaymentVerification,
+  buildTrackingTimeline,
   TRACKING_STAGES
 } from './src/lib/orderStatus';
 import { buildOrderShareText } from './src/lib/receipt';
@@ -93,8 +98,147 @@ test('payment label distinguishes cash on delivery from an unconfirmed transfer'
   // A UPI order stays pending until an admin verifies the transfer -- pressing
   // "I've Paid" records a claim, it never settles anything.
   assert.equal(paymentLabel({ payment_method: 'UPI', payment_status: 'pending' }), 'Pending Verification');
-  assert.equal(paymentLabel({ payment_method: 'UPI', payment_status: 'completed' }), 'Paid');
+  assert.equal(paymentLabel({ payment_method: 'UPI', payment_status: 'completed' }), 'Payment Confirmed');
+  assert.equal(paymentLabel({ payment_method: 'COD', payment_status: 'completed' }), 'Paid');
   assert.equal(paymentLabel({ payment_method: 'COD', payment_status: 'refunded' }), 'Refunded');
+});
+
+// --- Phase 3: admin payment verification ------------------------------------
+
+test('a rejected payment says so, and never reads as paid', () => {
+  const rejected = { payment_method: 'UPI', payment_status: 'rejected' } as const;
+  assert.equal(paymentLabel(rejected), 'Payment Rejected');
+  assert.doesNotMatch(paymentLabel(rejected), /paid|confirmed/i);
+  assert.equal(paymentTone(rejected), 'error');
+});
+
+test('a rejection tells the customer what to do next', () => {
+  assert.equal(
+    paymentNote({ payment_method: 'UPI', payment_status: 'rejected' }),
+    'Please contact the restaurant.'
+  );
+  // A settled or cash payment needs no instruction.
+  assert.equal(paymentNote({ payment_method: 'UPI', payment_status: 'completed' }), null);
+  assert.equal(paymentNote({ payment_method: 'COD', payment_status: 'pending' }), null);
+});
+
+test('payment tone separates settled, waiting and refused', () => {
+  assert.equal(paymentTone({ payment_method: 'UPI', payment_status: 'completed' }), 'success');
+  assert.equal(paymentTone({ payment_method: 'UPI', payment_status: 'pending' }), 'pending');
+  assert.equal(paymentTone({ payment_method: 'UPI', payment_status: 'failed' }), 'error');
+  assert.equal(paymentTone({ payment_method: 'COD', payment_status: 'pending' }), 'neutral');
+});
+
+test('only a settled payment raises a toast', () => {
+  // Nothing has been decided yet, so there is no news to announce.
+  assert.equal(paymentToastCopy('pending'), null);
+
+  assert.equal(paymentToastCopy('completed')?.title, 'Payment received and verified.');
+  assert.equal(paymentToastCopy('completed')?.tone, 'success');
+
+  assert.equal(paymentToastCopy('rejected')?.title, 'Payment rejected.');
+  assert.equal(paymentToastCopy('rejected')?.description, 'Please contact the restaurant.');
+  assert.equal(paymentToastCopy('rejected')?.tone, 'error');
+});
+
+test('awaitsPaymentVerification is true only for an unsettled transfer', () => {
+  assert.equal(awaitsPaymentVerification({ payment_method: 'UPI', payment_status: 'pending' }), true);
+  assert.equal(awaitsPaymentVerification({ payment_method: 'UPI', payment_status: 'completed' }), false);
+  assert.equal(awaitsPaymentVerification({ payment_method: 'UPI', payment_status: 'rejected' }), false);
+  // Cash has nothing to verify.
+  assert.equal(awaitsPaymentVerification({ payment_method: 'COD', payment_status: 'pending' }), false);
+});
+
+// --- tracking timeline ------------------------------------------------------
+
+const labelsOf = (order: Parameters<typeof buildTrackingTimeline>[0]) =>
+  buildTrackingTimeline(order).map(s => s.label);
+
+const stepFor = (order: Parameters<typeof buildTrackingTimeline>[0], key: string) =>
+  buildTrackingTimeline(order).find(s => s.key === key);
+
+test('a UPI order shows the payment steps in the specified order', () => {
+  assert.deepEqual(
+    labelsOf({ payment_method: 'UPI', payment_status: 'pending', status: 'pending' }),
+    ['Order Placed', 'Payment Pending', 'Payment Confirmed', 'Preparing', 'Out for Delivery', 'Delivered']
+  );
+});
+
+test('a cash order has no payment steps to wait through', () => {
+  const labels = labelsOf({ payment_method: 'COD', payment_status: 'pending', status: 'pending' });
+  assert.deepEqual(labels, ['Order Placed', 'Preparing', 'Out for Delivery', 'Delivered']);
+  assert.ok(!labels.some(l => l.startsWith('Payment')), 'cash should not show a payment wait');
+});
+
+test('the payment steps advance only when an admin settles the transfer', () => {
+  const waiting = { payment_method: 'UPI', payment_status: 'pending', status: 'pending' } as const;
+  assert.equal(stepFor(waiting, 'payment_pending')?.state, 'current');
+  assert.equal(stepFor(waiting, 'payment_confirmed')?.state, 'upcoming');
+
+  const verified = { payment_method: 'UPI', payment_status: 'completed', status: 'pending' } as const;
+  assert.equal(stepFor(verified, 'payment_pending')?.state, 'done');
+  assert.equal(stepFor(verified, 'payment_confirmed')?.state, 'done');
+});
+
+test('a rejected payment marks its step failed and renames it', () => {
+  const rejected = { payment_method: 'UPI', payment_status: 'rejected', status: 'pending' } as const;
+  const step = stepFor(rejected, 'payment_confirmed');
+  assert.equal(step?.state, 'failed');
+  assert.equal(step?.label, 'Payment Rejected');
+  assert.equal(step?.blurb, 'Please contact the restaurant.');
+  // The kitchen steps survive: the order still exists and can still be paid for.
+  assert.ok(labelsOf(rejected).includes('Delivered'));
+});
+
+test('the timeline tracks the kitchen through the lifecycle', () => {
+  const at = (status: OrderStatus) =>
+    buildTrackingTimeline({ payment_method: 'COD', payment_status: 'pending', status });
+
+  assert.equal(at('preparing').find(s => s.key === 'preparing')?.state, 'current');
+  assert.equal(at('out_for_delivery').find(s => s.key === 'preparing')?.state, 'done');
+  assert.equal(at('out_for_delivery').find(s => s.key === 'out_for_delivery')?.state, 'current');
+  assert.equal(at('delivered').find(s => s.key === 'delivered')?.state, 'current');
+  assert.equal(at('delivered').find(s => s.key === 'out_for_delivery')?.state, 'done');
+});
+
+test('an accepted order reads as the kitchen having started', () => {
+  const accepted = buildTrackingTimeline({
+    payment_method: 'COD', payment_status: 'pending', status: 'accepted'
+  });
+  const preparing = accepted.find(s => s.key === 'preparing');
+  assert.equal(preparing?.state, 'current');
+  assert.match(preparing?.blurb ?? '', /accepted/i);
+});
+
+test('a cancelled order ends the timeline rather than pretending to progress', () => {
+  const steps = buildTrackingTimeline({
+    payment_method: 'UPI', payment_status: 'pending', status: 'cancelled'
+  });
+  const last = steps[steps.length - 1];
+  assert.equal(last.key, 'cancelled');
+  assert.equal(last.state, 'failed');
+  // Nothing after "Order Placed" should claim to have happened.
+  for (const step of steps.slice(1, -1)) {
+    assert.notEqual(step.state, 'done', `${step.label} should not read as completed on a cancelled order`);
+  }
+});
+
+test('every timeline step carries a state the renderer knows how to draw', () => {
+  const known = new Set(['done', 'current', 'upcoming', 'failed']);
+  const methods = ['COD', 'UPI'] as const;
+  const payments = ['pending', 'completed', 'rejected', 'failed', 'refunded'] as const;
+
+  for (const payment_method of methods) {
+    for (const payment_status of payments) {
+      for (const status of EVERY_STATUS) {
+        for (const step of buildTrackingTimeline({ payment_method, payment_status, status })) {
+          assert.ok(known.has(step.state), `bad state ${step.state} for ${payment_method}/${payment_status}/${status}`);
+          assert.ok(step.label.length > 0, 'every step needs a label');
+          assert.ok(step.blurb.length > 0, 'every step needs a blurb');
+        }
+      }
+    }
+  }
 });
 
 // --- share text -------------------------------------------------------------

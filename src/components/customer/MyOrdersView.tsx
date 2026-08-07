@@ -8,7 +8,7 @@ import { useCart } from '../../context/CartContext';
 import { useToast } from '../../context/ToastContext';
 import { ordersService } from '../../services/supabase';
 import { OrderProgressTimeline } from './OrderProgressTimeline';
-import { canCustomerCancel, isCurrentOrder, statusLabel, paymentLabel } from '../../lib/orderStatus';
+import { canCustomerCancel, isCurrentOrder, statusLabel, paymentLabel, paymentTone } from '../../lib/orderStatus';
 import { downloadReceiptPdf } from '../../lib/receipt';
 
 interface MyOrdersViewProps {
@@ -205,9 +205,25 @@ export const MyOrdersView: React.FC<MyOrdersViewProps> = ({
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-base font-black text-[#C5A059]">₹{order.total_amount}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5">{paymentLabel(order)}</p>
+                        {/* A rejected payment is the one payment state that needs
+                            acting on, so it cannot read as quiet grey metadata. */}
+                        <p className={`text-[10px] mt-0.5 font-bold ${
+                          paymentTone(order) === 'success' ? 'text-emerald-400'
+                            : paymentTone(order) === 'error' ? 'text-rose-400'
+                            : paymentTone(order) === 'pending' ? 'text-amber-400'
+                            : 'text-gray-500'
+                        }`}>
+                          {paymentLabel(order)}
+                        </p>
                       </div>
                     </div>
+
+                    {order.payment_status === 'rejected' && (
+                      <p className="text-[11px] text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-xl p-2.5">
+                        Please contact the restaurant.
+                        {order.payment_rejection_reason && ` (${order.payment_rejection_reason})`}
+                      </p>
+                    )}
 
                     <div className="flex items-center justify-between gap-3">
                       <span className={`text-[11px] font-black px-3 py-1.5 rounded-full border ${
@@ -248,7 +264,7 @@ export const MyOrdersView: React.FC<MyOrdersViewProps> = ({
 
                       {isCurrentOrder(order) && (
                         <div className="pt-1">
-                          <OrderProgressTimeline status={order.status} compact />
+                          <OrderProgressTimeline order={order} compact />
                         </div>
                       )}
                     </div>

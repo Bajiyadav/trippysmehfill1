@@ -14,7 +14,7 @@ import { captureFullSecurityContext } from '../../lib/geoUtils';
 import {
   validateCheckout, nextOrderNumber, estimatedDeliveryLabel, buildUpiPaymentUri
 } from '../../lib/checkout';
-import { paymentLabel } from '../../lib/orderStatus';
+import { paymentLabel, paymentNote, paymentTone } from '../../lib/orderStatus';
 import { downloadReceiptPdf, shareOrder, sharePaymentScreenshot } from '../../lib/receipt';
 
 interface CheckoutViewProps {
@@ -476,6 +476,15 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
     const eta = estimatedDeliveryLabel(placedAt ?? new Date(), settings.estimated_delivery_mins);
     const isCod = placedOrder.payment_method === 'COD';
 
+    // `placedOrder` is the snapshot returned by the insert and never changes.
+    // A customer who stays on this screen while an admin verifies the transfer
+    // must see that happen, so the payment status is read from the live list
+    // that realtime keeps current, falling back to the snapshot before the
+    // subscription has delivered anything.
+    const live = existingOrders.find(o => o.id === placedOrder.id) ?? placedOrder;
+    const tone = paymentTone(live);
+    const note = paymentNote(live);
+
     return (
       <main className="flex-1 px-4 py-8 sm:py-12">
         <div className="max-w-xl mx-auto space-y-4 sm:space-y-5">
@@ -510,16 +519,27 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
             <div className="flex items-center justify-between gap-4 p-4 sm:px-5">
               <span className="text-[11px] uppercase tracking-wider text-gray-500 font-bold shrink-0">Payment Status</span>
               <span className={`text-xs font-black px-3 py-1.5 rounded-full border shrink-0 ${
-                isCod
-                  ? 'bg-[#C5A059]/10 border-[#C5A059]/30 text-[#C5A059]'
-                  : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                tone === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  : tone === 'error' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                  : tone === 'pending' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                  : 'bg-[#C5A059]/10 border-[#C5A059]/30 text-[#C5A059]'
               }`}>
-                {paymentLabel(placedOrder)}
+                {paymentLabel(live)}
               </span>
             </div>
           </section>
 
-          {!isCod && (
+          {note && (
+            <p className={`text-[11px] text-center px-2 leading-relaxed ${
+              tone === 'error'
+                ? 'text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-2xl py-3'
+                : 'text-gray-500'
+            }`}>
+              {note}
+            </p>
+          )}
+
+          {!isCod && live.payment_status === 'pending' && (
             <p className="text-[11px] text-gray-500 text-center px-2 leading-relaxed">
               {hasClaimedPayment
                 ? 'Your payment reference has been noted. It stays pending until our team verifies it.'
