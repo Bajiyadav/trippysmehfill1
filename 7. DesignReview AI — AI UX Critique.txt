@@ -1,0 +1,25 @@
+7. DesignReview AI — AI UX Critique Workspace
+Purpose
+A tool that helps designers review interfaces for usability, accessibility, and interaction problems.
+
+Main features
+Upload screenshot or design
+Add target-user information
+Run UX analysis
+Group findings by severity
+Add designer comments
+Create improvement tasks
+Compare design versions
+AI-native interaction
+Heuristic review
+Accessibility suggestions
+Responsive-layout warnings
+User-flow critique
+Designer approval of suggestions
+Skills demonstrated
+UX evaluation
+Accessibility
+Design systems
+AI-assisted design
+Critical design judgment
+This project is especially valuable because it shows that you understand design quality rather than only code generation.

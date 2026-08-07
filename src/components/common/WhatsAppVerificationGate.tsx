@@ -15,7 +15,7 @@ export const WhatsAppVerificationGate: React.FC<WhatsAppVerificationGateProps> =
     return null;
   }
 
-  const restaurantWhatsAppNumber = '919876543210';
+  const restaurantWhatsAppNumber = '918569955929';
   const textMessage = `Hi Trippy's Mehfill Kitchen, please verify my account for food ordering.\nName: ${user.full_name}\nEmail: ${user.email}\nPhone: ${user.phone}`;
   const whatsappUrl = `https://wa.me/${restaurantWhatsAppNumber}?text=${encodeURIComponent(textMessage)}`;
 

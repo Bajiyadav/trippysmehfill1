@@ -163,6 +163,14 @@ function MainApp() {
     };
   }, []);
 
+  // The mount-time load runs before anyone has signed in, so the admin-only
+  // rows (orders, profiles) come back empty under RLS. Re-load once a session
+  // exists so staff and admins see their data without a refresh.
+  useEffect(() => {
+    if (!user) return;
+    loadAllSupabaseData();
+  }, [user]);
+
   // Ensure default landing page is ALWAYS 'menu' (Home Page) on mount
   useEffect(() => {
     setActiveSection('menu');
@@ -187,6 +195,28 @@ function MainApp() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (!user) {
       setIsAuthModalOpen(true);
+    }
+  };
+
+  // Re-fetch profiles from Supabase to guarantee state synchronization
+  const refreshProfilesFromSupabase = async () => {
+    if (!isSupabaseConfigured || !user) return;
+    try {
+      const { data: profs, error } = await supabase.from('profiles').select('*');
+      if (error) {
+        console.error('[App] Failed to refresh profiles:', error.message);
+        return;
+      }
+      if (profs) {
+        const pending = profs.filter(p => !p.is_approved && p.role === 'customer');
+        const team = profs.filter(p => p.role === 'admin' || p.role === 'staff' || p.role === 'driver');
+        const custs = profs.filter(p => p.role === 'customer' && p.is_approved);
+        setPendingUsers(pending as UserProfile[]);
+        setStaffList(team as UserProfile[]);
+        setCustomersList(custs as UserProfile[]);
+      }
+    } catch (err) {
+      console.error('[App] Error re-fetching profiles:', err);
     }
   };
 
@@ -225,6 +255,8 @@ function MainApp() {
 
   const handleApproveUser = async (userId: string) => {
     const userToApprove = pendingUsers.find(u => u.id === userId);
+
+    // CRITICAL: Immediately update local state so card disappears instantly
     setPendingUsers(prev => prev.filter(u => u.id !== userId));
 
     if (userToApprove) {
@@ -236,15 +268,27 @@ function MainApp() {
     }
 
     if (isSupabaseConfigured) {
-      await supabase.from('profiles').update({ is_approved: true }).eq('id', userId);
+      const { error } = await supabase.from('profiles').update({ is_approved: true }).eq('id', userId);
+      if (error) {
+        console.error('Failed to approve user in Supabase:', error.message);
+      } else {
+        await refreshProfilesFromSupabase();
+      }
     }
   };
 
   const handleRejectUser = async (userId: string) => {
+    // CRITICAL: Immediately update local state so card disappears instantly
     setPendingUsers(prev => prev.filter(u => u.id !== userId));
+    setCustomersList(prev => prev.filter(u => u.id !== userId));
 
     if (isSupabaseConfigured) {
-      await supabase.from('profiles').delete().eq('id', userId);
+      const { error } = await supabase.from('profiles').delete().eq('id', userId);
+      if (error) {
+        console.error('Failed to delete profile from Supabase:', error.message);
+      } else {
+        await refreshProfilesFromSupabase();
+      }
     }
   };
 
@@ -548,9 +592,6 @@ function MainApp() {
         onRegisterSuccess={(newCustomer) => setCustomersList(prev => [newCustomer, ...prev])}
       />
 
-      {/* Mandatory WhatsApp Mobile Verification Gate for Customers */}
-      <WhatsAppVerificationGate />
-
       {/* Footer */}
       <footer className="bg-[#080808] text-gray-400 text-xs py-10 px-4 border-t border-white/10 mt-auto">
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -599,8 +640,8 @@ function MainApp() {
           <div className="space-y-2">
             <p className="text-xs font-black text-white uppercase tracking-wider font-serif">Contact</p>
             <div className="space-y-1.5 text-xs text-gray-300 font-mono">
-              <p>📞 +91 98765 43210</p>
-              <p>✉️ support@trippysmehfill.com</p>
+              <p>📞 +91 85699 55929</p>
+              <p>✉️ trippysmehfill.kitchen@gmail.com</p>
               <p className="text-gray-500 text-[11px] font-sans">📍 Sohna GLS Homes, Near GD Goenka University (GDGU), Sohna, Haryana</p>
             </div>
           </div>

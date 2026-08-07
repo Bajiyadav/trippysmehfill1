@@ -20,6 +20,21 @@ export interface UserProfile {
   latitude?: number;
   longitude?: number;
   location_city?: string;
+  // ERP Security & Geolocation metadata
+  gps_accuracy?: number;
+  gps_allowed?: boolean;
+  city?: string;
+  state?: string;
+  country?: string;
+  pin_code?: string;
+  distance_km?: number;
+  device_type?: string;
+  os_name?: string;
+  browser_name?: string;
+  timezone?: string;
+  google_maps_url?: string;
+  fraud_risk_level?: 'low' | 'medium' | 'high';
+  fraud_risk_reasons?: string[];
 }
 
 export interface GalleryItem {
@@ -83,6 +98,22 @@ export interface Order {
   rating?: number;
   created_at: string;
   updated_at?: string;
+  // Order ERP Security & Geolocation metadata
+  customer_ip?: string;
+  order_latitude?: number;
+  order_longitude?: number;
+  gps_accuracy?: number;
+  gps_allowed?: boolean;
+  distance_km?: number;
+  device_type?: string;
+  os_name?: string;
+  browser_name?: string;
+  city?: string;
+  state?: string;
+  pin_code?: string;
+  google_maps_url?: string;
+  fraud_risk_level?: 'low' | 'medium' | 'high';
+  fraud_risk_reasons?: string[];
 }
 
 export interface InventoryItem {

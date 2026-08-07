@@ -1,7 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
-const rawUrl = ((import.meta as any).env?.VITE_SUPABASE_URL || '').trim();
-const rawAnonKey = ((import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '').trim();
+const cleanEnvVar = (val: any): string => {
+  if (!val) return '';
+  let s = String(val).trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+};
+
+const rawUrl = cleanEnvVar((import.meta as any).env?.VITE_SUPABASE_URL);
+const rawAnonKey = cleanEnvVar((import.meta as any).env?.VITE_SUPABASE_ANON_KEY);
 
 const PLACEHOLDER_HINTS = ['your-supabase-project', 'placeholder', 'example.supabase.co'];
 
@@ -25,8 +34,12 @@ export const supabaseConfigError: string | null = (() => {
     return 'Supabase credentials are still set to placeholder values.';
   }
 
-  if (!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i.test(rawUrl)) {
-    return `VITE_SUPABASE_URL does not look like a Supabase project URL: "${rawUrl}".`;
+  if (rawAnonKey.startsWith('sb_publishable_')) {
+    return "VITE_SUPABASE_ANON_KEY is set to a publishable key ('sb_publishable_...'). Please replace it with the JWT anon public key ('eyJhbGci...').";
+  }
+
+  if (!/^https?:\/\/[a-z0-9-.]+/i.test(rawUrl)) {
+    return `VITE_SUPABASE_URL does not look like a valid URL: "${rawUrl}".`;
   }
 
   return null;

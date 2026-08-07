@@ -35,20 +35,22 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) =
         {/* Direct Contact Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <a
-            href="tel:+919876543210"
+            href="https://wa.me/918569955929"
+            target="_blank"
+            rel="noreferrer"
             className="p-4 bg-[#181818] hover:bg-white/5 border border-white/10 rounded-2xl flex items-center gap-3 transition group"
           >
-            <div className="p-2.5 rounded-xl bg-orange-600/20 border border-orange-500/30 text-orange-400 group-hover:bg-orange-600 group-hover:text-white transition">
+            <div className="p-2.5 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white transition">
               <Phone className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Kitchen Hotline</p>
-              <p className="text-sm font-extrabold text-white font-mono">+91 98765 43210</p>
+              <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Kitchen Hotline / WhatsApp</p>
+              <p className="text-sm font-extrabold text-white font-mono">+91 85699 55929</p>
             </div>
           </a>
 
           <a
-            href="mailto:support@trippysmehfill.com"
+            href="mailto:trippysmehfill.kitchen@gmail.com"
             className="p-4 bg-[#181818] hover:bg-white/5 border border-white/10 rounded-2xl flex items-center gap-3 transition group"
           >
             <div className="p-2.5 rounded-xl bg-amber-600/20 border border-amber-500/30 text-amber-400 group-hover:bg-amber-600 group-hover:text-white transition">
@@ -56,7 +58,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) =
             </div>
             <div>
               <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Email Support</p>
-              <p className="text-xs font-extrabold text-white truncate max-w-[160px]">support@trippysmehfill.com</p>
+              <p className="text-xs font-extrabold text-white truncate max-w-[160px]">trippysmehfill.kitchen@gmail.com</p>
             </div>
           </a>
         </div>

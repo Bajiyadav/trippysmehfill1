@@ -7,11 +7,41 @@
  * so every rule here must also be applied server-side before data is trusted.
  */
 
+import { z } from 'zod';
+
 export interface ValidationResult {
   valid: boolean;
   /** User-facing reason the value was rejected. Empty when valid. */
   message: string;
 }
+
+export const userRegistrationZodSchema = z.object({
+  full_name: z.string().min(3, 'Full name must be at least 3 characters').max(60, 'Full name is too long'),
+  email: z.string().email('Invalid email address').max(254),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(128),
+  phone: z.string().min(10, 'Phone number must be at least 10 digits').max(15),
+  hostel_address: z.string().min(5, 'Delivery address must be at least 5 characters').max(200)
+});
+
+export const profileDbZodSchema = z.object({
+  id: z.string().min(1, 'User ID is required'),
+  email: z.string().email().max(254),
+  full_name: z.string().min(1),
+  phone: z.string().optional(),
+  hostel_address: z.string().optional(),
+  role: z.enum(['customer', 'admin', 'staff', 'driver']),
+  is_approved: z.boolean(),
+  is_active: z.boolean()
+});
+
+export const orderDbZodSchema = z.object({
+  customer_id: z.string().min(1, 'Customer ID is required'),
+  customer_name: z.string().min(1, 'Customer name is required'),
+  customer_phone: z.string().min(10, 'Customer phone is required'),
+  delivery_address: z.string().min(5, 'Delivery address is required'),
+  subtotal: z.number().min(0),
+  total_amount: z.number().min(0)
+});
 
 const ok: ValidationResult = { valid: true, message: '' };
 const fail = (message: string): ValidationResult => ({ valid: false, message });

@@ -9,10 +9,11 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx --test \"*.test.ts\""
+    "test": "tsx --test *.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "@supabase/server": "^1.4.1",
     "@supabase/supabase-js": "^2.111.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
@@ -21,7 +22,8 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.10.1",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

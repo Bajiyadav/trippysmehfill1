@@ -7,6 +7,8 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { ordersService } from '../../services/supabase';
 import { playKitchenAlertSound } from '../../lib/sound';
 
+import { captureFullSecurityContext } from '../../lib/geoUtils';
+
 interface RightOrderPanelProps {
   onOrderSuccess: (order: Order) => void;
   onRequireAuth: () => void;
@@ -60,6 +62,8 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
 
     setIsPlacing(true);
 
+    const sec = await captureFullSecurityContext();
+
     // Compute sequential order number (#1001, #1002, #1003...)
     const orderNums = existingOrders.map(o => {
       const match = o.order_number?.match(/\d+/);
@@ -92,6 +96,21 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
       payment_status: paymentMethod === 'UPI' ? 'completed' : 'pending',
       upi_transaction_id: upiTxnId,
       status: 'pending',
+      customer_ip: sec.ipAddress,
+      order_latitude: sec.latitude,
+      order_longitude: sec.longitude,
+      gps_accuracy: sec.accuracyMeters,
+      gps_allowed: sec.gpsAllowed,
+      distance_km: sec.distanceKm,
+      device_type: sec.deviceType,
+      os_name: sec.osName,
+      browser_name: sec.browserName,
+      city: sec.city,
+      state: sec.state,
+      pin_code: sec.pinCode,
+      google_maps_url: sec.googleMapsUrl,
+      fraud_risk_level: sec.fraudRiskLevel,
+      fraud_risk_reasons: sec.fraudRiskReasons,
       created_at: new Date().toLocaleString()
     };
 
@@ -99,8 +118,13 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
       try {
         const created = await ordersService.createOrder(newOrder);
         newOrder.id = created.id;
-      } catch (err) {
-        console.error('Failed to sync order to Supabase:', err);
+      } catch (err: any) {
+        // The order only exists if the insert landed -- surface the failure
+        // rather than showing a success screen for an order nobody received.
+        console.error('Order database insert error:', err);
+        setErrorMsg(`Order creation failed: ${err?.message || 'Database error'}`);
+        setIsPlacing(false);
+        return;
       }
     }
 
