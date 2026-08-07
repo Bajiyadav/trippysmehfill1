@@ -1,4 +1,7 @@
-# Go-Live Checklist — Phase 3
+# Go-Live Checklist — RC2
+
+**Commit `6eadb35`** · Phase 3 payment verification + merged OTP improvements
+· Migrations **0001 – 0009**
 
 The ordered sequence for the day itself. Every step has a **verify** and a
 **stop condition**. If a stop condition fires, go to
@@ -40,9 +43,10 @@ Supabase Dashboard → Database → Backups
 
 ---
 
-## Step 2 · Apply migration 0007
+## Step 2 · Apply migrations 0001 → 0009
 
-Paste `supabase/migrations/0007_payment_verification.sql` into the SQL editor.
+**In numeric order, one at a time.** Do not paste them all at once — you need to
+see which one fails if one does.
 
 **Record the "before" counts first** — you need them for step 3:
 
@@ -52,7 +56,29 @@ SELECT payment_status, count(*) FROM public.orders GROUP BY 1 ORDER BY 1;
 
 Before: `_______________________________________________`
 
-Then run the migration.
+| # | File | Verify immediately after | ☐ |
+|---|---|---|---|
+| 0001 | `core_schema` | `SELECT to_regclass('public.orders');` non-null | ☐ |
+| 0002 | `rls_policies` | `SELECT to_regprocedure('public.is_team_member()');` non-null | ☐ |
+| 0003 | `auth_triggers` | **`SELECT tgname FROM pg_trigger WHERE tgrelid='auth.users'::regclass AND NOT tgisinternal;`** → `on_auth_user_created` | ☐ |
+| 0004 | `anon_lookup_rpcs` | `SELECT to_regprocedure('public.email_exists(text)');` non-null | ☐ |
+| 0005 | `signup_trigger_telemetry` | applies without error | ☐ |
+| 0006 | `customer_order_updates` | `orders_customer_update_own` in `pg_policies` | ☐ |
+| **0007** | **`payment_verification`** | full postflight, step 3 below | ☐ |
+| **0008** | `fix_profiles_rls` | 3 `profiles_%_own` policies exist | ☐ |
+| **0009** | `profiles_wallet_referral` | `SELECT to_regprocedure('public.phone_exists(text)');` non-null | ☐ |
+
+> ### ⚠️ 0003 is not optional in RC2
+>
+> RC2 moved profile creation out of the client into `handle_new_user_signup()`.
+> **0009 replaces that function but never creates the trigger that calls it** —
+> the trigger comes from 0003. Skip 0003 and every signup produces an auth user
+> with **no profile row and no role**, with no error anywhere.
+>
+> If your database was built from `phase2_schema.sql`, it has none of the
+> numbered migrations, so 0003 has almost certainly never run.
+
+Migration 0007 is the one with the interesting output:
 
 **Expected notices** (enum deployment — the likely one):
 
@@ -72,8 +98,8 @@ NOTICE:  0007: orders_status_check widened
 
 `already exists, skipping` and `does not exist, skipping` are expected and fine.
 
-- ☐ Migration ran
-- ☐ Notices match one set
+- ☐ All nine migrations ran, in order
+- ☐ 0007's notices match one set above
 - ☐ **Zero `ERROR` lines**
 
 **Stop condition:** any `ERROR` → rollback plan, scenario A.
@@ -94,11 +120,31 @@ Run the postflight block (§4.4 of the deployment checklist).
 | 3.6 | Realtime | `orders` in `supabase_realtime` | ☐ |
 | 3.7 | **Data untouched** | counts identical to step 2's "before" | ☐ |
 | 3.8 | Join query runs | returns a number | ☐ |
+| 3.9 | **Signup trigger wired** | `on_auth_user_created` on `auth.users` | ☐ |
+| 3.10 | **Signup function present** | `handle_new_user_signup()` non-null | ☐ |
+| 3.11 | **Payment guard survived 0008/0009** | `trg_enforce_customer_order_update`, `tgenabled='O'` | ☐ |
+| 3.12 | Auth RPCs present | `email_exists`, `lookup_login_email`, `phone_exists` all non-null | ☐ |
+
+```sql
+-- 3.9 – 3.12 in one go
+SELECT (SELECT string_agg(tgname, ',') FROM pg_trigger
+         WHERE tgrelid='auth.users'::regclass AND NOT tgisinternal)      AS signup_trigger,
+       to_regprocedure('public.handle_new_user_signup()')                AS signup_fn,
+       (SELECT tgenabled FROM pg_trigger
+         WHERE tgrelid='public.orders'::regclass
+           AND tgname='trg_enforce_customer_order_update')               AS payment_trigger,
+       to_regprocedure('public.email_exists(text)')                      AS email_rpc,
+       to_regprocedure('public.lookup_login_email(text)')                AS login_rpc,
+       to_regprocedure('public.phone_exists(text)')                      AS phone_rpc;
+```
+
+Expect: `on_auth_user_created` · non-null · `O` · non-null · non-null · non-null.
 
 After: `_______________________________________________`
 
-**Stop condition:** 3.7 differs → **rollback immediately**, scenario A. Any other
-row failing → rollback plan, scenario B.
+**Stop condition:** 3.7 differs → **rollback immediately**, scenario A. 3.9 or
+3.10 failing → **signup is broken**; apply 0003 before deploying. 3.11 failing →
+the payment guard is gone; stop. Any other row → rollback plan, scenario B.
 
 ---
 
@@ -145,6 +191,9 @@ Minimum viable confidence. Full coverage is
 
 | | Test | Expect | Done |
 |---|---|---|---|
+| 6.0a | **Sign up with a fresh email** | OTP arrives; verification completes; lands on menu | ☐ |
+| 6.0b | **Profile row was created** | see query below — **one row, role `customer`, `wallet_balance` 0.00, `referral_code` set** | ☐ |
+| 6.0c | **Refresh mid-OTP** | Returns to the OTP screen with details intact, countdown continues from where it was | ☐ |
 | 6.1 | Sign in with email OTP | Code arrives, lands on menu | ☐ |
 | 6.2 | Place a **COD** order | Confirmed; status *Pay on delivery* | ☐ |
 | 6.3 | Place a **UPI** order | Payment screen appears **after** the order saves | ☐ |
@@ -155,7 +204,18 @@ Minimum viable confidence. Full coverage is
 | 6.8 | Timeline, UPI | Shows Payment Pending / Payment Confirmed steps | ☐ |
 | 6.9 | Timeline, COD | Shows **no** payment steps | ☐ |
 
-**Stop condition:** 6.6 or 6.7 fails → rollback plan, scenario D.
+```sql
+-- 6.0b — the RC2 check that catches a silent signup failure
+SELECT email, full_name, phone, role, wallet_balance, referral_code
+  FROM public.profiles WHERE email = '<the address you just used>';
+```
+
+**Zero rows means `on_auth_user_created` is not wired.** The signup will still
+*look* successful in the browser — that is exactly the failure this catches. Go
+back to step 2 and apply 0003.
+
+**Stop condition:** 6.0b returns no row → **stop, signup is broken.** 6.6 or 6.7
+fails → rollback plan, scenario D.
 
 ---
 
@@ -254,14 +314,16 @@ staring at *Pending Verification* either way.
 | Gate | Met |
 |---|---|
 | Backup exists | ☐ |
-| Migration applied, data unchanged | ☐ |
+| Migrations 0001–0009 applied, data unchanged | ☐ |
+| **`on_auth_user_created` wired — signup creates a profile row** | ☐ |
+| **OTP arrives, and survives a refresh mid-verification** | ☐ |
 | Realtime delivering | ☐ |
 | Verify and Reject both work end to end | ☐ |
 | Customer sees the result without refreshing | ☐ |
 | A customer cannot settle their own payment | ☐ |
 | Rollback plan read, and someone is on call | ☐ |
 
-**All seven ticked → live.** Any unticked → hold, and record why:
+**All nine ticked → live.** Any unticked → hold, and record why:
 
 ```
 _______________________________________________________________

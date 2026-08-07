@@ -1,55 +1,109 @@
-# Release Notes — RC1 (Phase 3)
+# Release Notes — RC2
 
 | | |
 |---|---|
-| Release | **RC1** — Payment Verification |
-| Commit | `8092424` — *feat: phase 3 payment verification* |
+| Release | **RC2** — Payment Verification + merged OTP improvements |
+| Commit | `6eadb35` — *Merge upstream/main — teammate OTP fixes into Phase 3* |
 | Branch | `feat/supabase-auth-otp` (pushed to `origin`) |
-| Date prepared | 2026-08-07 |
-| Requires | **Migration 0007** — the release does not function without it |
-| Status | Code complete and frozen. **Not yet released to production** — see [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) |
+| Supersedes | RC1 (`8092424`) — see [RC1 → RC2](#rc1--rc2) |
+| Requires | **Migrations 0001 – 0009**, applied in order |
+| Status | Code complete and frozen. **Not yet released.** See [RC2_SUMMARY.md](RC2_SUMMARY.md) |
+
+Rollback tags: `rc1-pre-merge` (`8092424`) · `rc1-docs` (`3904b80`)
 
 ---
 
-## Summary
+## RC1 → RC2
 
-A UPI payment now stays at **Pending Verification** until a member of the
-restaurant team confirms the money actually arrived, then flips to **Payment
-Confirmed** or **Payment Rejected** on the customer's screen without a refresh.
+RC1 was Phase 3 alone. RC2 adds the merge of `upstream/main`, bringing your
+teammate's authentication and OTP work alongside it.
 
-Before this release there was no way to move an order out of Pending
-Verification at all. UPI orders would have sat there indefinitely.
+| | RC1 | RC2 |
+|---|---|---|
+| Commit | `8092424` | `6eadb35` |
+| Migrations | 0001 – 0007 | **0001 – 0009** |
+| Tests | 128 / 128 | 128 / 128 |
+| Bundle (gzip) | 342.31 kB | **344.17 kB** |
+| Scope | Payment verification | Payment verification **+ OTP, wallet, referral** |
+
+RC2 is **not** a bugfix pass over RC1 — it contains new features from upstream.
+The RC1 verification is superseded, not extended.
 
 ---
 
 ## Features
 
-### Admin — Payment Verification
+### Authentication and OTP *(merged from upstream)*
 
-A new tab between Live Orders and Kitchen, showing every UPI order with:
+**Session restore across a reload.** A customer who refreshes, switches apps, or
+is interrupted mid-verification no longer loses their signup. `AuthModal`
+persists the pending state to `sessionStorage` under `trippys_pending_otp_state`
+and restores it on open.
+
+```
+saved:   email · fullName · phone · hostelAddress · regStep · timestamp
+window:  10 minutes (600000 ms) — older state is ignored
+restores: the OTP screen, the register tab, and the remaining resend countdown
+cleared:  on successful verification, via clearPendingOtpState()
+```
+
+The restored resend timer is recomputed from the saved timestamp
+(`60 - elapsed`), so a customer who reloads at 40 seconds sees 20 remaining
+rather than a fresh 60.
+
+**OTP state persistence** is written at two points — after the registration form
+is submitted and after an OTP is dispatched — so both entry paths survive a
+reload.
+
+**A resend cooldown that survives a reload.** `emailService` gained:
+
+```ts
+getRemainingOtpCooldownSeconds(email): number
+recordOtpSentTimestamp(email): void
+```
+
+**Reorganised OTP surface** in `src/lib/emailService.ts`:
+
+```ts
+sendEmailVerificationOTP()   // signup
+sendSignInOTP()              // passwordless sign-in
+verifyEmailOTPCode()
+sendPasswordResetOTP()       // now uses signInWithOtp, not a reset link
+resetPasswordWithOTP()
+```
+
+Password reset moved to `signInWithOtp`, and Supabase error messages are
+sanitised before display while the raw error is still logged to devtools — so a
+customer sees something actionable and you can still diagnose it.
+
+**Profile creation moved into the database.** The client no longer builds the
+profile after OTP verification; the `handle_new_user_signup()` trigger does it.
+See [Breaking changes](#breaking-changes).
+
+### Payment verification (Phase 3)
+
+Unchanged from RC1 and re-verified after the merge.
+
+A UPI payment stays at **Pending Verification** until a team member confirms the
+money arrived, then flips to **Payment Confirmed** or **Payment Rejected** on the
+customer's screen with no refresh. Before Phase 3 there was no way to move an
+order out of Pending Verification at all.
+
+**Admin — Payment Verification tab** (between Live Orders and Kitchen):
 
 Order ID · Customer · Phone · Amount · Payment Method · Transaction ID ·
-Created Time · Payment Status
+Created Time · Payment Status, with **✅ Verify Payment** and **❌ Reject
+Payment**.
 
-- **✅ Verify Payment** — sets `payment_status = completed`
-- **❌ Reject Payment** — sets `payment_status = rejected`, with an optional reason
+- Cash orders excluded — there is no transfer to check
+- Search across order number, name, phone, reference, amount
+- Filters: Pending Verification (default) · Verified · Rejected · All UPI
+- Pagination 10/page, page index clamped so a live update cannot blank the screen
+- Rejection takes two deliberate steps, with an optional reason
+- Created Time is **absolute**, so it matches a bank statement
+- Table at `lg`+, cards below, all buttons ≥48 px
 
-Cash orders are excluded: there is no transfer to check, so listing them would
-only be noise for whoever works the queue.
-
-- Search across order number, customer name, phone, transaction reference and amount
-- Filters: Pending Verification (default) · Verified · Rejected · All UPI Orders
-- Pagination, 10 per page, with the page index clamped so a live update cannot
-  drop a reader onto a blank screen
-- Pending count badge on the tab
-- Rejection takes two deliberate steps — reason panel, then Confirm — because it
-  is destructive from the customer's side
-- Transaction reference is click-to-copy
-- Created Time is **absolute**, not "5 minutes ago", so it can be matched against
-  a bank statement
-- Table at `lg`+, cards below; all buttons ≥48 px
-
-### Customer — live payment status
+**Customer:**
 
 | State | Label | Note |
 |---|---|---|
@@ -59,156 +113,168 @@ only be noise for whoever works the queue.
 | COD, unsettled | Pay on delivery | — |
 | COD, collected | Paid | — |
 
-Shown on the checkout confirmation, the order tracker, and My Orders. All three
-update over realtime with no refresh.
+Toasts: **"Payment received and verified."** / **"Payment rejected. Please
+contact the restaurant."** Nothing is announced while still pending — no decision
+has been made, so there is no news.
 
-Toasts on settlement:
+### Realtime
 
-- **"Payment received and verified."** — Your order is confirmed.
-- **"Payment rejected."** — Please contact the restaurant.
+- `orders` added to the `supabase_realtime` publication by 0007. On the deployed
+  `phase2_schema.sql` database it was **never published**, so the client
+  subscribed successfully and then received nothing — indistinguishable from
+  "nobody has verified it yet."
+- Subscription keyed on `user?.id` rather than `[]`, because `postgres_changes`
+  is RLS-filtered against the token the socket joined with. A channel opened
+  while anonymous stays anonymous.
+- Unique channel topics per subscription, so a re-subscribe cannot collide with
+  a channel still tearing down.
+- The tracker now re-syncs on `payment_status`, `payment_rejection_reason` and
+  `driver_name`, not just `status`.
 
-Nothing is announced while the payment is still pending: no decision has been
-made, so there is no news.
+### Wallet and referral *(merged from upstream)*
 
-### Order tracking
+Migration **0009** adds to `public.profiles`:
 
-The tracker now leads with the four facts — **Order Status · Payment Status ·
-Estimated Delivery · Order Timeline** — before the diagram, because someone
-opening it wants to know where things stand.
+- `wallet_balance` — defaults to `0.00`
+- `referral_code` — generated per signup, format `TRIPPY-XXXX-1234`
+- `phone_exists(text)` RPC, so signup can check phone availability without
+  tripping an RLS 401
 
-**UPI**
+`UserProfile` gains `wallet_balance?` and `referral_code?`.
 
-```
-Order Placed → Payment Pending → Payment Confirmed → Preparing → Out for Delivery → Delivered
-```
-
-**Cash on delivery**
-
-```
-Order Placed → Preparing → Out for Delivery → Delivered
-```
-
-Payment steps appear for UPI only. Showing a cash order "Payment Pending" would
-invent a wait that does not exist.
-
-A rejected payment marks its step red and renames it **Payment Rejected** — it
-does not truncate the timeline. The order still exists and the kitchen steps are
-still reachable once the customer sorts the payment out.
+> **No application feature consumes the wallet yet.** The columns and the code
+> generation exist; spending, crediting and the 25% OFF referral redemption are
+> not wired into checkout. Treat this as schema groundwork, not a shipped
+> feature.
 
 ---
 
-## Bug fixes
+## Merge conflict resolutions
 
-### The tracker was frozen on payment status
+The merge touched 7 files. **Only one conflicted** — `AuthModal.tsx`, in two
+hunks. `types/index.ts`, `validation.ts` and `CustomerDashboardModal.tsx`
+auto-merged.
 
-The live-tracking effect compared only `status`, so a verification arriving while
-a customer had the tracker open changed nothing on screen. It now also compares
-`payment_status`, `payment_rejection_reason` and `driver_name`, field by field
-rather than by reference — `orders` is rebuilt on every refetch, so an identity
-check would have reset state on each poll.
+Both hunks were resolved by reading them, not by a strategy flag.
 
-### The confirmation screen rendered a stale snapshot
+### Hunk 1 — OTP state restore · **kept both sides**
 
-`placedOrder` is what the insert returned and never changes. A customer sitting
-on the confirmation screen while an admin verified their transfer would have
-watched nothing happen. It now reads the live row, falling back to the snapshot
-before the subscription has delivered anything.
+Theirs added the `sessionStorage` restore effect; ours was a comment explaining
+why the resend countdown is driven by the timer alone. No actual disagreement, so
+both survive.
 
-### `orders` was never published to Realtime
+> **`-X ours` would have been wrong here.** It takes our side of every
+> conflicting hunk, which would have silently deleted the OTP restore effect —
+> part of the very OTP work being merged. The merge would have reported success
+> and quietly shipped less than you asked for.
 
-`0002_rls_policies.sql` adds it. `phase2_schema.sql` / `phase2_rls.sql` — the
-pair the deployed database was actually built from — never do. On that
-deployment the client subscribes successfully and then receives nothing, which
-looks **identical** to "no one has verified it yet". Migration 0007 adds the
-table to the publication.
+### Hunk 2 — account creation after OTP · **took theirs**
 
-### Half of migration 0006's customer-cancel policy matched nothing
+Ours called `signUp()`, built a `UserProfile`, fired `onRegisterSuccess` and
+closed the modal — sitting **after** the `try/catch`, duplicating logic their
+version already contained. Theirs additionally calls `clearPendingOtpState()`.
 
-The policy reads `status IN ('pending','accepted')`, but `'accepted'` was not a
-legal value in either base schema, so an order could never reach it. 0007 widens
-`order_status` to the vocabulary the application already speaks.
+Verified after resolution: **one** `newCustomer` construction remains, not two.
 
-### Three copies of the order row mapping
+### Migration numbering collision · **renumbered**
 
-`fetchOrders`, `fetchCustomerOrders` and `fetchOrderById` each contained the same
-row→`Order` mapping written out separately, so a column added to one silently
-went missing from the others — which is exactly what would have happened to the
-Phase 3 audit columns. Consolidated into one `mapOrderRow`.
+Upstream shipped `0006_fix_profiles_rls.sql` and
+`0007_profiles_wallet_referral.sql`, colliding with our
+`0006_customer_order_updates.sql` and `0007_payment_verification.sql`.
 
-### Three bugs caught by the migration harness
+**Git reported no conflict** — the filenames differ, so it saw four unrelated new
+files and merged them cleanly. You would have been left with two `0006`s and two
+`0007`s and no defined apply order.
 
-None were visible by reading the SQL. Recorded in full in
-[DATABASE_MIGRATION_0007.md](DATABASE_MIGRATION_0007.md):
-
-1. The rollback could not narrow the enum — a partial index predicate bound
-   `'pending'` to the old type. Index drops now precede the type swap.
-2. The rollback could not narrow `order_status` — a live policy referenced the
-   column. The policy is now dropped up front and recreated at the end.
-3. **The trigger's maintenance bypass was inverted.** It used
-   `current_user NOT IN ('anon','authenticated')`, but inside a `SECURITY
-   DEFINER` function `current_user` is the *function owner*, not the caller — so
-   the condition was always true and **the "only an admin can verify" guard was
-   disabled for everyone, including customers.** The harness caught it as
-   *"FAIL a customer marked their own payment completed"*. It now keys off
-   `request.jwt.claims`, which PostgREST sets per request and a direct database
-   session never does.
+Theirs were renumbered to **0008** and **0009**, running after ours. That
+ordering was chosen so the Phase 3 documentation and the verification harness
+keep referring to the right files.
 
 ---
 
 ## Breaking changes
 
-### 1. `PaymentStatus` gains `'rejected'`
+### 1. Account creation moved from the client to the database
+
+```tsx
+// before — client built the profile after verifyOtp
+const created = await signUp({ full_name, phone, hostel_address, email, password });
+onRegisterSuccess(newCustomer);
+
+// after — handle_new_user_signup() creates it on INSERT into auth.users
+```
+
+**Consequence:** if the `on_auth_user_created` trigger is not installed on your
+database, **signups now produce an auth user with no profile row and no role.**
+Under RC1 the client would have papered over it. See
+[Deployment notes](#deployment-notes) — this is the single most important check
+in this release.
+
+### 2. `PaymentStatus` gains `'rejected'`
 
 ```ts
-// before
-type PaymentStatus = 'pending' | 'completed' | 'failed' | 'refunded';
-// after
 type PaymentStatus = 'pending' | 'completed' | 'rejected' | 'failed' | 'refunded';
 ```
 
-Any exhaustive `switch` over `PaymentStatus` outside this repository will now
-fail to compile until it handles `'rejected'`. Within the repository, everything
-is handled.
+Any exhaustive `switch` outside this repository must handle it.
 
-### 2. `OrderProgressTimeline` prop changed
+### 3. `OrderProgressTimeline` prop changed
 
 ```tsx
 <OrderProgressTimeline status={order.status} />   // before
 <OrderProgressTimeline order={order} />            // after
 ```
 
-The component needs the payment method and status to decide whether payment
-steps belong. Both call sites were updated.
+### 4. Verified UPI orders read "Payment Confirmed", not "Paid"
 
-### 3. Verified UPI orders now read "Payment Confirmed", not "Paid"
+Cash collected at the door is still *Paid*. No database value changed meaning.
 
-`paymentLabel()` returns **"Payment Confirmed"** for a settled UPI order and
-keeps **"Paid"** for cash collected at the door. Cash handed over is *paid*; a
-verified transfer is *confirmed*, which is the wording the customer was promised
-while they were waiting. The Phase 2.5 test asserting `'Paid'` was updated.
-
-**No database value changed meaning.** `'completed'` still means `'completed'`.
-
-### 4. Nothing else
+### 5. Nothing else
 
 No API removed, no table dropped, no column renamed, no existing row rewritten.
-The previous application build runs unchanged against a 0007-migrated database.
 
 ---
 
-## Database changes — migration 0007
+## Database changes
 
-Files:
+### Migration order — 0001 to 0009
+
+| # | File | Adds |
+|---|---|---|
+| 0001 | `core_schema` | Tables, constraints, indexes |
+| 0002 | `rls_policies` | RLS + `is_team_member()`, `current_role_name()` |
+| 0003 | `auth_triggers` | **`on_auth_user_created` on `auth.users`** → `handle_new_user_signup()` |
+| 0004 | `anon_lookup_rpcs` | `email_exists()`, `lookup_login_email()` |
+| 0005 | `signup_trigger_telemetry` | Signup telemetry |
+| 0006 | `customer_order_updates` | Customer UPDATE policy + order trigger |
+| **0007** | **`payment_verification`** | **`'rejected'`, audit columns, indexes, Realtime, payment trigger** |
+| **0008** | `fix_profiles_rls` *(upstream, renumbered)* | Profiles grants + policies, privileged-column trigger |
+| **0009** | `profiles_wallet_referral` *(upstream, renumbered)* | `wallet_balance`, `referral_code`, `phone_exists()`, replaces `handle_new_user_signup()` |
+
+`0007_payment_verification_down.sql` reverses 0007 only.
+
+### The dependency that is easy to miss
+
+**0009 replaces `handle_new_user_signup()` but does not create the trigger that
+calls it.** That trigger — `on_auth_user_created` on `auth.users` — comes from
+**0003**.
 
 ```
-supabase/migrations/0007_payment_verification.sql          forward
-supabase/migrations/0007_payment_verification_down.sql     rollback
-supabase/verify/run_migration_checks.sh                    verification harness
+0003  CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users
+        EXECUTE FUNCTION public.handle_new_user_signup();
+0009  CREATE OR REPLACE FUNCTION public.handle_new_user_signup()   ← function only
 ```
 
-### The repository carries two incompatible schemas
+If you apply 0009 without 0003 having run, you get a correct function that
+**nothing ever calls**, and every signup silently produces no profile. Combined
+with breaking change 1, that is a broken signup flow with no error message.
 
-**This is the single most important fact about this migration.**
+This matters because your deployed database was built from `phase2_schema.sql`,
+which contains none of the numbered migrations.
+
+### Two incompatible schemas
+
+`supabase/` still carries two definitions of the same tables:
 
 | | `migrations/0001_core_schema.sql` | `phase2_schema.sql` |
 |---|---|---|
@@ -218,53 +284,127 @@ supabase/verify/run_migration_checks.sh                    verification harness
 | `is_deleted` | absent | present |
 | line items | `orders.items` jsonb | `order_items` table |
 
-`src/services/supabase/orders.ts` queries `order_items` and filters on
-`is_deleted`. **Your deployed database was built from `phase2_schema.sql`.**
+`src/services/supabase/orders.ts` queries `order_items` and filters `is_deleted`,
+so **the deployed database is the `phase2_schema.sql` shape.** Migration 0007
+detects which it is running against and takes the matching path. Migrations 0008
+and 0009 touch only `profiles`, which is compatible with both.
 
-Widening an enum and widening a CHECK constraint are entirely different
-operations. A migration written for the numbered chain would have run without
-error and changed nothing that matters. **0007 detects which shape it is running
-against and takes the matching path.** It is correct and idempotent on both.
+---
 
-### What it does
+## Bug fixes
 
-1. Makes `'rejected'` a storable `payment_status` — enum `ADD VALUE` or widened CHECK
-2. Widens `order_status` with `'accepted'`, `'preparing'`, `'ready'`
-3. Adds three nullable audit columns, no backfill, no table rewrite:
-   ```
-   payment_verified_at       timestamptz
-   payment_verified_by       uuid → profiles(id) ON DELETE SET NULL
-   payment_rejection_reason  text
-   ```
-4. Adds `orders_payment_status_idx` and a partial `orders_payment_pending_idx`
-   covering exactly the admin queue query
-5. Publishes `public.orders` to `supabase_realtime` if it is not already
-6. Replaces the `BEFORE UPDATE` trigger so it stamps the verifier from
-   `auth.uid()` server-side and refuses settlement by a non-team member
-7. Recreates 0006's `orders_customer_update_own` policy, so 0007 stands alone
+**From Phase 3**
 
-**Migration 0006 is superseded** — 0007 recreates both its policy and its trigger
-function. Running 0006 first is harmless but unnecessary.
+- The tracker compared only `status`, so a verification arriving while the
+  customer had it open changed nothing on screen.
+- The checkout confirmation rendered `placedOrder`, a snapshot from the insert
+  that never updates. It now reads the live row.
+- `orders` was never published to Realtime on the deployed schema.
+- Half of 0006's customer-cancel policy matched nothing: it reads
+  `status IN ('pending','accepted')`, but `'accepted'` was not a legal value in
+  either base schema. 0007 widens the vocabulary.
+- The row→`Order` mapping existed in **three** copies, so a new column added to
+  one silently went missing from the others. Consolidated into `mapOrderRow`.
 
-`REPLICA IDENTITY` is deliberately left at default: the client refetches on any
-event rather than diffing payloads, so `FULL` would add WAL volume for nothing.
+**Caught by the migration harness** — none visible by reading the SQL:
 
-### Verification — actually run, not asserted
+1. Rollback could not narrow the enum — a partial index predicate bound
+   `'pending'` to the old type. Index drops now precede the type swap.
+2. Rollback could not narrow `order_status` — a live policy referenced the
+   column. It is now dropped up front and recreated at the end.
+3. **The trigger's maintenance bypass was inverted.** It used
+   `current_user NOT IN ('anon','authenticated')`, but inside a `SECURITY
+   DEFINER` function `current_user` is the *function owner*, not the caller — so
+   the condition was always true and **the "only an admin can verify" guard was
+   disabled for everyone.** Now keyed off `request.jwt.claims`, which PostgREST
+   sets per request and a direct database session never does.
+
+**From the merge**
+
+- OTP verification no longer lost on refresh (session restore).
+- Password reset uses `signInWithOtp` instead of a reset link.
+- Profiles RLS 401 / 422 on registration fixed by 0008.
+- `handle_new_user_signup()` wrapped in an exception block, so a profile-insert
+  failure warns rather than aborting the signup transaction.
+- Signup can check phone availability via `phone_exists()` without a 401.
+
+---
+
+## Security
+
+The rule Phase 3 exists to enforce — **nothing marks a payment completed except a
+person deciding it is** — holds in three independent places:
+
+| Layer | Guarantee |
+|---|---|
+| Database trigger | A non-team member moving `payment_status` off `'pending'` raises `check_violation`. Client writes to audit columns refused. |
+| RLS | UPDATE on `orders` restricted to team members and, narrowly, the owning customer. |
+| Application | `'completed'` / `'rejected'` written only by `verifyPayment` / `rejectPayment`. |
+
+`payment_verified_at` and `payment_verified_by` are **never sent by the client** —
+the trigger stamps them from `auth.uid()`.
+
+Both service methods guard on `payment_status = 'pending'` **in the WHERE
+clause**, so two admins pressing Verify produces one settlement and one *"already
+reviewed"*.
+
+**Re-verified after the merge:** the payment trigger survives 0008 and 0009 on
+both schema shapes.
+
+Migration 0008 adds `protect_privileged_profile_columns()`, blocking a customer
+from mutating their own `role`, `is_approved` or `account_status`.
+
+**Verified clean:** no Brevo or SMTP credential anywhere in `src/` — SMTP is
+dashboard-only, as it must be, since a `VITE_*` key is inlined into the bundle.
+`DEV_TEST_CREDENTIALS` is dead code, never accepted by any auth path, and
+tree-shaken out of `dist/`. *But* if "Test Phone Numbers" are configured in the
+Supabase Auth dashboard, those static codes work in production regardless.
+
+---
+
+## Verification
+
+### Build
+
+```
+tsc --noEmit          clean
+node:test             128 / 128 pass, 0 fail
+npm run build         ✓ built in 2m 9s
+```
+
+| Asset | Raw | gzip |
+|---|---|---|
+| `index-*.js` | 1,288.80 kB | **344.17 kB** |
+| `jspdf.es.min-*.js` | 390.77 kB | 128.82 kB |
+| `html2canvas.esm-*.js` | 202.38 kB | 48.04 kB |
+| `index.es-*.js` | 159.76 kB | 53.56 kB |
+| `index-*.css` | 82.15 kB | 13.05 kB |
+
+**+1.86 kB gzip over RC1** for the merged OTP work. Vite warns above 500 kB raw;
+not a blocker — the three heaviest dependencies are code-split and load only when
+a receipt is generated.
+
+### Migrations
 
 `./supabase/verify/run_migration_checks.sh` builds each schema from scratch on a
-real PostgreSQL, applies the full chain, asserts behaviour, rolls back, and
-re-applies.
-
-**Result on PostgreSQL 17.10 — 27/27 assertions, both schemas:**
+real PostgreSQL, applies the chain, asserts behaviour, rolls back, re-applies.
 
 ```
-== A.  enum schema (phase2_schema.sql)     apply · pre-existing row untouched · re-apply
-== A2. 27 behavioural assertions           all PASS
-== A3. rollback                            enum restored, audit columns dropped
-== A4. re-apply after rollback             forward migration is repeatable
-== B.  CHECK schema (0001–0006)            apply · re-apply · widen · roll back · narrow
+== A.  enum schema (phase2_schema.sql)   apply · pre-existing row untouched · re-apply
+== A2. 27 behavioural assertions         all PASS
+== A3. rollback                          enum restored, audit columns dropped
+== A4. re-apply after rollback           forward migration is repeatable
+== B.  CHECK schema (0001–0006)          apply · re-apply · widen · roll back · narrow
+== C.  full chain with 0008 + 0009       both schemas:
+         apply 0008 / 0009 · re-apply (idempotent)
+         handle_new_user_signup() present
+         payment verification trigger still installed
 RESULT: all migration checks passed
 ```
+
+Section C is new in RC2. It proves the merged migrations apply in order on both
+schema shapes and that **nothing upstream added undoes the Phase 3 payment
+guard.**
 
 Assertions include: `'rejected'` storable · all four legacy values still insert ·
 garbage still refused · enum label order preserved · audit column types and FK ·
@@ -274,49 +414,20 @@ completed** · **cannot set it to rejected** · **cannot forge the audit trail**
 admin can verify · `payment_verified_by` stamped server-side · admin can reject
 with a reason · RLS blocks a stranger · `orders` published to Realtime.
 
-### Rollback is lossy
+### Test suites
 
-PostgreSQL cannot delete an enum value, so reversing means building a narrower
-type and remapping rows first:
-
-| Before | After rollback |
+| Suite | Tests |
 |---|---|
-| `payment_status = 'rejected'` | `'failed'` |
-| `status = 'accepted'` / `'preparing'` | `'cooking'` |
-| `status = 'ready'` | `'out_for_delivery'` |
-| audit columns | **dropped** |
+| `orderStatus.test.ts` | 23 |
+| `validation.test.ts` | 21 |
+| `checkout.test.ts` | 14 |
+| `otpService.test.ts` | 5 |
+| `authErrors`, `exportUtils`, `geoUtils`, `initialData`, `sound` | remainder |
+| **Total** | **128** |
 
-Each remap prints an affected-row count **before** it runs. Full procedure in
-[ROLLBACK_PLAN.md](ROLLBACK_PLAN.md).
-
----
-
-## Security
-
-The rule this release exists to enforce — **nothing marks a payment completed
-except a person deciding it is** — holds in three independent places:
-
-| Layer | Guarantee |
-|---|---|
-| Database trigger | A non-team member setting `payment_status` off `'pending'` raises `check_violation`. Client writes to the audit columns are refused. |
-| RLS | UPDATE on `orders` restricted to team members and, narrowly, the owning customer. |
-| Application | `'completed'` / `'rejected'` are written only by `verifyPayment` / `rejectPayment`, reachable only from the admin screen. |
-
-`payment_verified_at` and `payment_verified_by` are **never sent by the client**.
-The trigger stamps them from `auth.uid()`, so the audit trail records the actor
-the database saw rather than one the browser claimed to be.
-
-Both service methods also guard on `payment_status = 'pending'` **in the WHERE
-clause**, so two admins pressing Verify simultaneously produces one settlement
-and one *"already reviewed"* — not a double write.
-
-**Verified clean:** no Brevo or SMTP credential appears anywhere in `src/`
-(SMTP is dashboard-only, as it must be — a `VITE_*` key would be inlined into
-the client bundle). `DEV_TEST_CREDENTIALS` in `otpService.ts` is dead code, is
-never accepted by any auth path, and is **tree-shaken out of the production
-bundle** — confirmed by grepping `dist/`. *However*, if "Test Phone Numbers" are
-configured in the Supabase Auth dashboard, those static codes would work in
-production; that is a dashboard setting to check, listed in the release checklist.
+**Automated tests cover pure logic only.** There is no component or E2E harness.
+The [MANUAL_TEST_PLAN.md](MANUAL_TEST_PLAN.md) has **not been executed** and is a
+release gate.
 
 ---
 
@@ -326,31 +437,37 @@ production; that is a dashboard setting to check, listed in the release checklis
 
 ```
 1. Merge to main
-2. Take a database backup          ← record the timestamp
-3. Apply migration 0007
-4. Verify the migration            ← postflight SQL
+2. Back up the database                    ← record the timestamp
+3. Apply migrations 0001 → 0009 in order
+4. Verify after each                       ← especially 0003, 0007, 0009
 5. Enable Realtime in the dashboard
 6. Deploy the application
 7. Smoke test, then the two-browser realtime test
 ```
 
-**Migration before application.** The reverse leaves the admin screen writing a
-value the database cannot store.
+**Migrations before application.** The reverse leaves the admin screen writing a
+value the database cannot store, and signup creating no profile.
 
-### Expected migration output
+### The three checks that matter most
 
+```sql
+-- 1. Is the signup trigger wired? Breaking change 1 depends on it entirely.
+SELECT tgname FROM pg_trigger
+ WHERE tgrelid = 'auth.users'::regclass AND NOT tgisinternal;
+-- expect: on_auth_user_created
+
+-- 2. Does the function it calls exist?
+SELECT to_regprocedure('public.handle_new_user_signup()');
+-- expect: non-null
+
+-- 3. Is the payment guard installed?
+SELECT tgname, tgenabled FROM pg_trigger
+ WHERE tgrelid = 'public.orders'::regclass
+   AND tgname = 'trg_enforce_customer_order_update';
+-- expect: one row, tgenabled = 'O'
 ```
-NOTICE:  0007: payment_status enum extended with 'rejected'
-NOTICE:  0007: order_status enum extended with accepted/preparing/ready
-NOTICE:  0007: public.orders added to the supabase_realtime publication
-NOTICE:  0007: created fallback public.is_team_member()
-```
-
-`already exists, skipping` notices are expected — the file is idempotent.
 
 ### Environment
-
-Two variables, both in [src/lib/supabase.ts](src/lib/supabase.ts):
 
 ```
 VITE_SUPABASE_URL          https://<project-ref>.supabase.co
@@ -360,76 +477,61 @@ VITE_SUPABASE_ANON_KEY     eyJhbGci...   (JWT anon key, NOT sb_publishable_...)
 **`VITE_*` values are inlined at build time.** Changing them in the hosting
 dashboard does nothing until you **redeploy**. The app detects missing values,
 placeholders, and a publishable-key-instead-of-JWT, and names the exact problem
-on screen rather than failing opaquely.
+on screen.
 
 ### Hosting
 
 Both `vercel.json` and `netlify.toml` are present — confirm which is
-authoritative. Both configure the SPA rewrite, without which a hard refresh on
-any route 404s. Netlify pins Node 20; Vercel pins nothing. Built and tested here
-on Node 24.11.1.
+authoritative. Both configure the SPA rewrite, without which a hard refresh
+404s. Netlify pins Node 20; Vercel pins nothing. Built here on Node 24.11.1.
 
 ### Realtime
 
-Migration 0007 adds `orders` to the publication, but **the Realtime service
-itself is a project setting** and cannot be enabled from SQL:
-Dashboard → Database → Replication.
-
-### Known pre-existing risk — verify before go-live
-
-`email_exists` and `lookup_login_email` are defined **only** in
-`migrations/0004_anon_lookup_rpcs.sql`, which is not part of `phase2_schema.sql`.
-Same for the signup trigger (0003 / 0005). If they are absent on your database:
-
-- sign-in by phone or username always answers *"No account found"*
-- password reset fails the same way
-- new signups get an auth user with **no profile row and no role**
-
-Email sign-in still works. **Pre-existing, not caused by this release** — but the
-preflight SQL in [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) §3 reports it
-in one query.
-
-### Build output
-
-| Asset | Raw | gzip |
-|---|---|---|
-| `index-*.js` | 1,282.11 kB | **342.31 kB** |
-| `jspdf.es.min-*.js` | 390.77 kB | 128.82 kB |
-| `html2canvas.esm-*.js` | 202.38 kB | 48.04 kB |
-| `index.es-*.js` | 159.76 kB | 53.56 kB |
-| `index-*.css` | 82.15 kB | 13.05 kB |
-
-Vite warns above 500 kB raw. Not a blocker — the three heaviest dependencies are
-already code-split and load only when a receipt is generated.
+0007 adds `orders` to the publication, but **the Realtime service is a project
+setting** and cannot be enabled from SQL: Dashboard → Database → Replication.
 
 ---
 
-## Test results
+## Known limitations
 
-```
-tsc --noEmit          clean
-node:test             128 / 128 pass, 0 fail     (2.7s)
-npm run build         ✓ built in 8.98s
-migration harness     27 / 27 assertions, both schemas, incl. rollback
-```
-
-| Suite | Tests |
-|---|---|
-| `orderStatus.test.ts` | 23 *(+13 for Phase 3)* |
-| `validation.test.ts` | 21 |
-| `checkout.test.ts` | 14 |
-| `otpService.test.ts` | 5 |
-| others | `authErrors`, `exportUtils`, `geoUtils`, `initialData`, `sound` |
-
-**Automated tests cover pure logic only.** There is no component or E2E harness
-in this project. The 41-case [MANUAL_TEST_PLAN.md](MANUAL_TEST_PLAN.md) has **not
-been executed** and is a release gate.
+1. **Wallet and referral are schema-only.** Columns and code generation exist;
+   nothing spends, credits, or redeems. The 25% OFF referral is not wired into
+   checkout.
+2. **0008 and 0009 carry stale internal headers** reading `0006` and `0007` from
+   before the renumber. Cosmetic — the filenames are authoritative — but it will
+   confuse anyone reading the file top-down.
+3. **Two incompatible schema files** in `supabase/`. Every migration must be
+   written twice until reconciled, as 0007 was.
+4. **`initialOrders` seeds four example orders** with invented names as a
+   pre-Supabase fallback. Flagged since Phase 1.
+5. **Order numbers can collide under concurrency.** `nextOrderNumber` reads the
+   client's list; two simultaneous checkouts can both compute `#1008`. Needs a
+   database sequence.
+6. **Nothing writes `'accepted'` / `'preparing'` / `'ready'`.** The database
+   accepts them and the timeline renders them, but Kitchen still emits the legacy
+   vocabulary. The mapping handles both, so no regression.
+7. **A rejected payment does not cancel the order.** Deliberate — the customer
+   may still pay another way.
+8. **No alert when the verification queue goes unworked.** An unreviewed UPI
+   order leaves a paying customer at *Pending Verification* indefinitely. A
+   monitoring query is provided; automation is not.
+9. **`sessionStorage` OTP restore does not survive a browser restart** or a
+   different tab. That is the intended trade-off — `localStorage` would leave
+   half-finished signup details on a shared device.
 
 ---
 
 ## Files
 
-**Added**
+**Added in RC2**
+
+```
+supabase/migrations/0008_fix_profiles_rls.sql          (upstream, renumbered)
+supabase/migrations/0009_profiles_wallet_referral.sql  (upstream, renumbered)
+RC2_SUMMARY.md
+```
+
+**Added in RC1, carried forward**
 
 ```
 src/components/admin/PaymentVerificationView.tsx
@@ -439,39 +541,20 @@ supabase/verify/{run_migration_checks.sh,00_supabase_stub.sql,verify_phase2.sql}
 DATABASE_MIGRATION_0007.md   PHASE3_PAYMENT_VERIFICATION.md
 DEPLOYMENT_CHECKLIST.md      GO_LIVE_CHECKLIST.md
 MANUAL_TEST_PLAN.md          ROLLBACK_PLAN.md
+RELEASE_NOTES.md             RELEASE_CHECKLIST.md
 ```
 
-**Modified**
+**Modified by the merge**
 
 ```
-src/types/index.ts                                  src/App.tsx
-src/lib/orderStatus.ts                              src/components/admin/AdminHeaderNav.tsx
-src/services/supabase/orders.ts                     src/components/customer/CheckoutView.tsx
-src/components/customer/OrderProgressTimeline.tsx   src/components/customer/MyOrdersView.tsx
-src/components/customer/OrderTrackerModal.tsx       orderStatus.test.ts
+src/components/common/AuthModal.tsx            OTP session restore, signup flow
+src/context/AuthContext.tsx                    auth flow
+src/lib/emailService.ts                        OTP send/verify/cooldown
+src/lib/useAntiFraudRegistration.ts            registration telemetry
+src/lib/validation.ts                          validation additions
+src/types/index.ts                             wallet_balance, referral_code
+src/components/customer/CustomerDashboardModal.tsx
+supabase/verify/run_migration_checks.sh        section C
 ```
 
-**Untouched, by instruction:** Kitchen, Reports, Analytics, Driver.
-
----
-
-## Carried forward — not fixed in this release
-
-1. **Two incompatible schema files** in `supabase/`. Every migration must be
-   written twice until they are reconciled, as this one was.
-2. **`initialOrders` seeds four example orders** with invented customer names as
-   a pre-Supabase fallback. Flagged since Phase 1.
-3. **Order numbers can collide under concurrency.** `nextOrderNumber` reads the
-   client's list; two simultaneous checkouts can both compute `#1008`. Needs a
-   database sequence. Flagged in Phase 2.
-4. **Nothing writes `'accepted'` / `'preparing'` / `'ready'` yet.** The database
-   now accepts them and the timeline renders them, but Kitchen — off-limits by
-   instruction — still emits the legacy vocabulary. The mapping handles both, so
-   no regression.
-5. **A rejected payment does not cancel the order.** Deliberate: the customer may
-   still pay another way, and cancelling is a separate decision. If you would
-   rather rejection auto-cancelled, that is a one-line change to
-   `rejectPayment`.
-6. **Nobody is reminded to work the queue.** An unreviewed UPI order leaves a
-   paying customer at *Pending Verification* indefinitely. There is a monitoring
-   query in [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md) step 10, but no alert.
+**Untouched throughout Phase 3:** Kitchen, Reports, Analytics, Driver.

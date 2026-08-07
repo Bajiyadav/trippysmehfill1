@@ -1,7 +1,8 @@
-# Release Checklist — RC1
+# Release Checklist — RC2
 
-**Release:** RC1 · Phase 3 Payment Verification
-**Commit:** `8092424`
+**Release:** RC2 · Phase 3 Payment Verification + merged OTP improvements
+**Commit:** `6eadb35`
+**Supersedes:** RC1 (`8092424`)
 **Prepared:** 2026-08-07
 
 Companion documents:
@@ -26,11 +27,12 @@ No row is marked verified on the strength of reading code.
 | # | Item | Status | Evidence |
 |---|---|---|---|
 | 1.1 | All Phase 3 files committed | ✅ VERIFIED | 22 files, commit `8092424` |
+| 1.1b | Upstream OTP work merged | ✅ VERIFIED | `6eadb35`; 1 conflicted file resolved by hand, migrations renumbered |
 | 1.2 | Working tree clean | ✅ VERIFIED | `git status --porcelain` → empty |
-| 1.3 | Pushed to origin | ✅ VERIFIED | `fbd0fd0..8092424`, local and remote hashes identical |
+| 1.3 | Pushed to origin | ✅ VERIFIED | `3904b80..6eadb35`, local and remote hashes identical |
 | 1.4 | No secrets committed | ✅ VERIFIED | `.env.local` matched by `.gitignore:7`; no `.env`/key file in the tree |
-| 1.5 | Merged to `main` | ❌ **BLOCKER** | 42 commits ahead of `main`; PR not opened |
-| 1.6 | Release tagged | ❌ **BLOCKER** | No tag — [ROLLBACK_PLAN.md](ROLLBACK_PLAN.md) has no target to revert to |
+| 1.5 | Merged to `main` | ❌ **BLOCKER** | Ahead of `main`; PR not opened |
+| 1.6 | Release tagged | ⚠️ PARTIAL | Rollback tags `rc1-pre-merge` (`8092424`) and `rc1-docs` (`3904b80`) exist. **No `rc2` tag yet.** |
 
 ```
 $ git status --porcelain
@@ -38,11 +40,11 @@ $ git status --porcelain
 $ git status -sb
 ## feat/supabase-auth-otp...origin/feat/supabase-auth-otp
 $ git log --oneline -1
-8092424 feat: phase 3 payment verification
+6eadb35 Merge upstream/main — teammate OTP fixes into Phase 3
 ```
 
 - [ ] 1.5 — open PR, review, merge to `main`
-- [ ] 1.6 — `git tag rc1 && git push origin rc1`
+- [ ] 1.6 — `git tag rc2 && git push origin rc2`
 
 ---
 
@@ -50,17 +52,74 @@ $ git log --oneline -1
 
 | # | Item | Status | Evidence |
 |---|---|---|---|
-| 2.1 | TypeScript compiles | ✅ VERIFIED | `tsc --noEmit` → no output |
-| 2.2 | Tests pass | ✅ VERIFIED | **128 / 128**, 0 fail, 2.7s |
-| 2.3 | Production build | ✅ VERIFIED | `✓ built in 8.98s` |
-| 2.4 | Bundle size acceptable | ✅ VERIFIED | main chunk **342.31 kB gzip**; jsPDF/html2canvas already code-split |
+| 2.1 | TypeScript compiles | ✅ VERIFIED | `tsc --noEmit` → no output, **after the merge** |
+| 2.2 | Tests pass | ✅ VERIFIED | **128 / 128**, 0 fail, after the merge |
+| 2.3 | Production build | ✅ VERIFIED | `✓ built in 2m 9s` |
+| 2.4 | Bundle size acceptable | ✅ VERIFIED | main chunk **344.17 kB gzip** (+1.86 kB vs RC1); jsPDF/html2canvas already code-split |
 | 2.5 | No service_role key in bundle | ✅ VERIFIED | `grep -r service_role dist/` → nothing |
 | 2.6 | Dev test credentials excluded | ✅ VERIFIED | `919876543210`, `919999999999`, `Dev Admin`, `Test Teammate`, `DEV_TEST_CREDENTIALS` → **0 matches** in `dist/` |
 | 2.7 | Clean-install build | ⚠️ UNVERIFIABLE | Run `rm -rf node_modules && npm ci && npm run build` on the CI host |
 
 ---
 
-## 3 · Migration 0007
+## 3 · Migration order — 0001 to 0009
+
+**Apply in numeric order. Verify after each.** Two later migrations depend on
+earlier ones in ways that fail *silently* rather than erroring.
+
+| # | File | What it adds | Verify with |
+|---|---|---|---|
+| 0001 | `core_schema` | Tables, constraints, indexes | `SELECT to_regclass('public.orders');` → non-null |
+| 0002 | `rls_policies` | RLS, `is_team_member()`, `current_role_name()` | `SELECT to_regprocedure('public.is_team_member()');` → non-null |
+| 0003 | `auth_triggers` | **`on_auth_user_created` on `auth.users`** | `SELECT tgname FROM pg_trigger WHERE tgrelid='auth.users'::regclass AND NOT tgisinternal;` → `on_auth_user_created` |
+| 0004 | `anon_lookup_rpcs` | `email_exists()`, `lookup_login_email()` | `SELECT to_regprocedure('public.email_exists(text)');` → non-null |
+| 0005 | `signup_trigger_telemetry` | Signup telemetry | applies without error |
+| 0006 | `customer_order_updates` | Customer UPDATE policy + order trigger | `SELECT policyname FROM pg_policies WHERE policyname='orders_customer_update_own';` → one row |
+| **0007** | **`payment_verification`** | `'rejected'`, audit columns, indexes, Realtime, payment trigger | §4.4 postflight block |
+| **0008** | `fix_profiles_rls` | Profiles grants + policies, privileged-column trigger | `SELECT count(*) FROM pg_policies WHERE tablename='profiles' AND policyname LIKE 'profiles_%_own';` → 3 |
+| **0009** | `profiles_wallet_referral` | `wallet_balance`, `referral_code`, `phone_exists()`, replaces `handle_new_user_signup()` | `SELECT to_regprocedure('public.phone_exists(text)');` → non-null |
+
+> ### ⚠️ 0009 depends on 0003, and failure is silent
+>
+> **0009 replaces `handle_new_user_signup()` but never creates the trigger that
+> calls it.** That trigger comes from **0003**.
+>
+> ```
+> 0003  CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users
+>         EXECUTE FUNCTION public.handle_new_user_signup();
+> 0009  CREATE OR REPLACE FUNCTION public.handle_new_user_signup()   ← function only
+> ```
+>
+> Apply 0009 without 0003 and you get a correct function **nothing ever calls**.
+> RC2 moved profile creation out of the client and into that trigger, so the
+> result is: every signup produces an auth user with **no profile row and no
+> role**, with no error anywhere. Verify 0003's trigger explicitly.
+
+**After the whole chain:**
+
+```sql
+SELECT tgname FROM pg_trigger WHERE tgrelid='auth.users'::regclass AND NOT tgisinternal;
+-- expect: on_auth_user_created
+
+SELECT to_regprocedure('public.handle_new_user_signup()') AS fn,
+       to_regprocedure('public.phone_exists(text)')       AS phone_rpc,
+       to_regprocedure('public.email_exists(text)')       AS email_rpc,
+       to_regprocedure('public.lookup_login_email(text)') AS login_rpc;
+-- expect: all four non-null
+
+SELECT tgname, tgenabled FROM pg_trigger
+ WHERE tgrelid='public.orders'::regclass AND tgname='trg_enforce_customer_order_update';
+-- expect: one row, tgenabled = 'O'  ← the Phase 3 guard survived 0008/0009
+```
+
+- [ ] 0001 – 0009 applied in order, each verified
+- [ ] `on_auth_user_created` present on `auth.users`
+- [ ] All four functions present
+- [ ] Payment trigger still installed **after** 0008 and 0009
+
+---
+
+## 4 · Migration 0007 in detail
 
 | # | Item | Status | Evidence |
 |---|---|---|---|
@@ -76,15 +135,25 @@ $ git log --oneline -1
 | 3.10 | Existing app queries still run | ✅ VERIFIED | all three query shapes |
 | 3.11 | Rollback works | ✅ VERIFIED | enum → 4 labels, audit columns dropped |
 | 3.12 | Re-appliable after rollback | ✅ VERIFIED | forward migration repeatable |
-| 3.13 | **Applied to production** | ❌ **BLOCKER** | Not run against your Supabase project |
+| 3.13 | **0008 + 0009 apply on both schemas** | ✅ VERIFIED | harness section C, added in RC2 |
+| 3.14 | **0008 / 0009 idempotent** | ✅ VERIFIED | re-applied cleanly on both |
+| 3.15 | **Payment guard survives 0008/0009** | ✅ VERIFIED | `trg_enforce_customer_order_update` still installed after the full chain |
+| 3.16 | **Applied to production** | ❌ **BLOCKER** | Chain not run against your Supabase project |
 
 ```
 $ ./supabase/verify/run_migration_checks.sh
-behavioural assertions passed: 27
+== C. Full chain including the merged upstream migrations (0008, 0009)
+  -- t_enum --                          -- t_check --
+  ok  apply 0008 (profiles RLS)         ok  apply 0008 (profiles RLS)
+  ok  apply 0009 (wallet + referral)    ok  apply 0009 (wallet + referral)
+  ok  re-apply 0008 (idempotent)        ok  re-apply 0008 (idempotent)
+  ok  re-apply 0009 (idempotent)        ok  re-apply 0009 (idempotent)
+  ok  handle_new_user_signup() present  ok  handle_new_user_signup() present
+  ok  payment trigger still installed   ok  payment trigger still installed
 RESULT: all migration checks passed
 ```
 
-- [ ] 3.13 — back up first, then run 0007 per [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md) step 2
+- [ ] 3.16 — back up first, then run 0001–0009 per [GO_LIVE_CHECKLIST.md](GO_LIVE_CHECKLIST.md)
 
 ---
 
@@ -170,6 +239,13 @@ SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_trigger
 | 7.2 | No static OTP accepted by the app | ✅ VERIFIED | `123456` appears only in a dev **console hint** and dead constants; every verification calls `supabase.auth.verifyOtp` |
 | 7.3 | Dev credentials tree-shaken from production | ✅ VERIFIED | 0 matches in `dist/` |
 | 7.4 | `otpService` tests pass | ✅ VERIFIED | 5 / 5 |
+| 7.4a | OTP session restore present | ✅ VERIFIED | `trippys_pending_otp_state` written at 2 points, restored on open, cleared on success |
+| 7.4b | Restore window bounded | ✅ VERIFIED | 10 minutes (600000 ms); older state ignored |
+| 7.4c | Resend cooldown survives reload | ✅ VERIFIED | `getRemainingOtpCooldownSeconds()` / `recordOtpSentTimestamp()` |
+| 7.4d | Signup no longer creates the profile client-side | ✅ VERIFIED | one `newCustomer` construction, not two; `clearPendingOtpState()` called on success |
+| 7.4e | **Profile creation depends on the DB trigger** | ⚠️ **UNVERIFIABLE — HIGH RISK** | See §3. If `on_auth_user_created` is absent, **every signup silently produces no profile.** |
+| 7.4f | Session restore works in a browser | ⚠️ UNVERIFIABLE | **TC-16 – TC-18** |
+| 7.4g | Signup via DB trigger works | ⚠️ UNVERIFIABLE | **TC-19** |
 | 7.5 | SMTP (Brevo) configured | ⚠️ UNVERIFIABLE | Dashboard → Project Settings → Auth → SMTP |
 | 7.6 | Site URL points at production | ⚠️ UNVERIFIABLE | Wrong Site URL is the usual cause of OTP that works locally and fails live |
 | 7.7 | Redirect URLs include production origin | ⚠️ UNVERIFIABLE | Dashboard → Authentication → URL Configuration |
@@ -242,13 +318,14 @@ SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_trigger
 
 | # | Blocker | Owner | Resolution |
 |---|---|---|---|
-| **B1** | **Migration 0007 not applied to production.** Verify and Reject fail without it — Verify with an RLS error, Reject with an enum/check violation. | DBA | Back up, then run it. Go-live step 2. |
-| **B2** | **Not merged to `main`.** 42 commits ahead on a feature branch. | Dev | PR → review → merge |
-| **B3** | **No release tag.** [ROLLBACK_PLAN.md](ROLLBACK_PLAN.md) scenario C has no target. | Dev | `git tag rc1 && git push origin rc1` |
-| **B4** | **Manual test plan not executed.** 41 cases, 0 run. **TC-11** (a customer cannot settle their own payment) and **TC-14** (two-browser realtime) are the two that decide whether this release does what it claims. | QA | Execute [MANUAL_TEST_PLAN.md](MANUAL_TEST_PLAN.md) |
+| **B1** | **Migrations 0001–0009 not applied to production.** Verify and Reject fail without 0007 — Verify with an RLS error, Reject with an enum/check violation. | DBA | Back up, then run the chain in order |
+| **B2** | **Not merged to `main`.** | Dev | PR → review → merge |
+| **B3** | **No `rc2` tag.** Rollback tags exist for RC1 only. | Dev | `git tag rc2 && git push origin rc2` |
+| **B4** | **Manual test plan not executed.** 49 cases, 0 run. **TC-11** (a customer cannot settle their own payment), **TC-14** (two-browser realtime) and **TC-19** (signup via DB trigger) decide whether this release does what it claims. | QA | Execute [MANUAL_TEST_PLAN.md](MANUAL_TEST_PLAN.md) |
 | **B5** | **Realtime service state unknown.** SQL cannot enable it. Without it, "no refresh" silently does not happen. | DBA | Dashboard → Database → Replication |
-| **B6** | **RPC / signup-trigger presence unknown.** Pre-existing, but if `handle_new_user` is missing, **new signups get no profile and no role.** | DBA | Preflight §3, then apply 0003/0004/0005 if missing |
+| **B6** | **`on_auth_user_created` trigger presence unknown — now more severe.** RC2 moved profile creation out of the client into this trigger. If it is absent, **every signup produces an auth user with no profile and no role, silently.** RC1 would have papered over it; RC2 will not. | DBA | Verify per §3, apply 0003 if missing |
 | **B7** | **Admin account existence unconfirmed.** Zero admins means nobody can verify a payment. | DBA | `SELECT count(*) FROM profiles WHERE role::text='admin';` |
+| **B8** | **Wallet and referral are schema-only.** 0009 adds the columns and generates codes, but nothing spends, credits or redeems, and the 25% OFF referral is not wired into checkout. Ship only if you are content for these to be dormant. | Product | Decide: ship dormant, or defer 0009 |
 
 ---
 
@@ -271,41 +348,50 @@ SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_trigger
 ### 🔴 NO-GO for production
 
 **Not because the code is unsound.** Everything verifiable from a repository is
-verified: 128/128 tests, clean compile, successful build, and 27/27 database
-assertions on a real PostgreSQL 17 covering both schemas, forward and rollback —
-including proof that a customer cannot mark their own payment completed, cannot
-reject it, and cannot forge the audit trail.
+verified — after the merge, not before it: 128/128 tests, clean compile,
+successful build, and 27 database assertions on a real PostgreSQL 17 across both
+schemas, forward and rollback, plus a new section proving migrations 0008 and
+0009 apply in order and **do not undo the Phase 3 payment guard**.
 
-**The release is blocked on seven items that require your Supabase project, your
+That includes proof that a customer cannot mark their own payment completed,
+cannot reject it, and cannot forge the audit trail.
+
+**The release is blocked on eight items requiring your Supabase project, your
 hosting dashboard, and a human with a browser** — none of which I can reach.
 
-Two of them are not paperwork:
+Three are not paperwork:
 
-- **B1** — until migration 0007 is applied, the feature this release exists to
+- **B1** — until the migrations are applied, the feature this release exists to
   deliver **does not work at all**.
+- **B6** — RC2 raised the stakes. Profile creation moved from the client into
+  `handle_new_user_signup()`. If `on_auth_user_created` is not wired, **every
+  signup silently produces an account with no profile and no role.** RC1 masked
+  this; RC2 does not.
 - **B4** — the security guarantee is verified in SQL but has never been exercised
-  through the running application. **TC-11 must be executed.** A guarantee nobody
-  has tried to break is a claim, not a control.
+  through the running application. A guarantee nobody has tried to break is a
+  claim, not a control.
 
 ### Path to GO
 
 ```
-1. B2  merge to main                          Dev
-2. B3  tag the release                        Dev
-3. B6  preflight SQL — RPCs, trigger, RLS     DBA
-4. B7  confirm at least one admin exists      DBA
-5.     BACK UP THE DATABASE                   DBA   ← record the timestamp
-6. B1  apply migration 0007 + postflight      DBA
-7. B5  enable Realtime in the dashboard       DBA
-8.     deploy the application                 Dev
-9. B4  execute the manual test plan           QA
-        must pass: TC-04 TC-05 TC-09 TC-10 TC-11 TC-13 TC-14
+ 1. B2  merge to main                              Dev
+ 2. B3  tag rc2                                    Dev
+ 3. B8  decide: ship wallet/referral dormant?      Product
+ 4. B6  preflight SQL — trigger, RPCs, RLS         DBA
+ 5. B7  confirm at least one admin exists          DBA
+ 6.     BACK UP THE DATABASE                       DBA   ← record the timestamp
+ 7. B1  apply 0001 → 0009, verifying after each    DBA
+ 8.     confirm on_auth_user_created + payment trigger   DBA
+ 9. B5  enable Realtime in the dashboard           DBA
+10.     deploy the application                     Dev
+11. B4  execute the manual test plan               QA
+         must pass: TC-04 TC-05 TC-09 TC-10 TC-11 TC-13 TC-14 TC-19
 ```
 
-**When all nine are done and the seven must-pass cases are green, this release is
-READY FOR PRODUCTION.**
+**When all eleven are done and the eight must-pass cases are green, this release
+is READY FOR PRODUCTION.**
 
-Until then the honest statement is: **RC1 is code-complete, frozen, and verified
+Until then the honest statement is: **RC2 is code-complete, frozen, and verified
 to the limit of what can be verified without your infrastructure.**
 
 ---
@@ -315,11 +401,13 @@ to the limit of what can be verified without your infrastructure.**
 | Gate | Owner | Date | Signature |
 |---|---|---|---|
 | B2 · Merged to main | | | |
-| B3 · Tagged | | | |
-| B6 · Preflight clean | | | |
+| B3 · Tagged `rc2` | | | |
+| B8 · Wallet/referral decision made | | | |
+| B6 · Preflight clean (**trigger present**) | | | |
 | B7 · Admin exists | | | |
 | — · Backup taken | | | |
-| B1 · Migration applied | | | |
+| B1 · Migrations 0001–0009 applied | | | |
+| — · `on_auth_user_created` + payment trigger confirmed | | | |
 | B5 · Realtime enabled | | | |
 | — · Application deployed | | | |
 | B4 · Manual tests passed | | | |

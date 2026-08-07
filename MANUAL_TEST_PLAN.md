@@ -1,4 +1,4 @@
-# Manual Test Plan — Phase 3
+# Manual Test Plan — RC2
 
 There is no component or E2E harness in this project. `npm test` covers pure
 logic only (128 assertions over validation, checkout rules, order status and the
@@ -13,9 +13,15 @@ tracking timeline). **Everything below has to be done by a person.**
 | Devices | A desktop browser and a real phone. Two browsers side by side for TC-14. |
 | Data | A menu with at least two available dishes above the minimum order value |
 
-**Before starting:** confirm migration 0007 is applied and `orders` is published
-to Realtime — §4.4 and §5 of [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md).
-Without those, most of these fail for reasons that have nothing to do with the UI.
+**Before starting:** confirm migrations **0001–0009** are applied, `orders` is
+published to Realtime, and `on_auth_user_created` exists on `auth.users` —
+§3, §4.4 and §5 of [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md). Without
+those, most of these fail for reasons that have nothing to do with the UI.
+
+**New in RC2:** section **H · Authentication** (TC-16 – TC-22). RC2 moved profile
+creation out of the client and into the `handle_new_user_signup()` database
+trigger, and added OTP session restore. Both are new code paths with no
+automated coverage.
 
 **Recording:** mark each case Pass / Fail / Blocked. A Fail needs the actual
 observed behaviour written down, not just the mark.
@@ -341,6 +347,129 @@ timeline component, all of which other screens use.
 
 ---
 
+## H · Authentication — new in RC2
+
+RC2 changed how a customer account comes into existence. These paths have **no
+automated coverage** — `otpService.test.ts` tests pure helpers, not the flow.
+
+### TC-16 · Email signup reaches the OTP screen
+
+| | |
+|---|---|
+| **Steps** | 1. Open the site signed out. 2. Register. 3. Enter name, 10-digit phone, hostel address, email. 4. Submit. |
+| **Expect** | OTP screen appears. A real code arrives by email within ~60s. Resend link is disabled with a visible countdown. |
+| **Why** | Confirms Brevo SMTP and the Auth Site URL are correct in production. |
+
+☐ Pass ☐ Fail — observed: `______________________________`
+
+### TC-17 · Refresh during OTP does not lose the signup
+
+**The headline RC2 fix.**
+
+| | |
+|---|---|
+| **Steps** | 1. From TC-16, on the OTP screen, **press F5 / pull-to-refresh**. 2. Reopen the auth modal if it does not reopen itself. |
+| **Expect** | You land back on the **OTP screen**, not the start of registration. Email, name, phone and address are all still filled in. The register tab is selected. |
+| **Why** | `sessionStorage` key `trippys_pending_otp_state`, restored on modal open. |
+
+☐ Pass ☐ Fail — observed: `______________________________`
+
+### TC-18 · The restored countdown is honest
+
+| | |
+|---|---|
+| **Steps** | 1. On the OTP screen, wait ~40 seconds. 2. Refresh. |
+| **Expect** | Roughly **20 seconds** remaining, not a fresh 60. The resend link becomes available at the right moment. |
+| **Why** | The timer is recomputed from the saved timestamp, not restarted. A reset timer would let someone farm OTP emails by refreshing. |
+
+☐ Pass ☐ Fail — observed: `______________________________`
+
+**Also check the window expires:**
+
+| | |
+|---|---|
+| **Steps** | Start a signup, leave it **more than 10 minutes**, then refresh. |
+| **Expect** | State is **discarded** — you start fresh, not on a stale OTP screen. |
+
+☐ Confirmed
+
+### TC-19 · Signup creates the profile via the database trigger — **MUST PASS**
+
+**If this fails, do not go live.** RC2 removed the client-side profile creation.
+
+| | |
+|---|---|
+| **Steps** | Complete a signup end to end with a fresh email, entering the OTP. |
+| **Expect** | Signed in and landed on the menu. A success message appears briefly before the modal closes. |
+
+☐ Pass ☐ Fail — observed: `______________________________`
+
+**Database check — this is the actual test:**
+
+```sql
+SELECT p.id, p.email, p.full_name, p.phone, p.role,
+       p.wallet_balance, p.referral_code, p.is_approved
+  FROM public.profiles p
+ WHERE p.email = '<the address you used>';
+```
+
+| Expect | ☐ |
+|---|---|
+| Exactly **one** row | ☐ |
+| `role = 'customer'` | ☐ |
+| `full_name` and `phone` match what was typed | ☐ |
+| `wallet_balance = 0.00` | ☐ |
+| `referral_code` populated, shaped `TRIPPY-XXXX-1234` | ☐ |
+
+**Zero rows means `on_auth_user_created` is not wired.** The signup will still
+*appear* to succeed — that is exactly the silent failure this case exists to
+catch. Fix by applying migration 0003.
+
+**Also confirm no duplicate:**
+
+```sql
+SELECT email, count(*) FROM public.profiles GROUP BY 1 HAVING count(*) > 1;
+```
+
+Expect no rows. A duplicate would mean both the trigger and a client path are
+creating profiles.
+
+☐ Confirmed
+
+### TC-20 · Login
+
+| | |
+|---|---|
+| **Steps** | Sign out, then sign in with the account from TC-19. |
+| **Expect** | Signed in, role applied correctly, lands on the menu. |
+
+☐ Pass ☐ Fail — observed: `______________________________`
+
+**Sign in by phone or username** — depends on the `lookup_login_email` RPC:
+
+☐ Pass ☐ Fail — observed: `______________________________`
+
+### TC-21 · Logout
+
+| | |
+|---|---|
+| **Steps** | Sign out. Then hard-refresh. |
+| **Expect** | Signed out and stays signed out. Admin entry point gone. Cart and order history not visible. No leftover session in `localStorage` under `trippys-auth`. |
+
+☐ Pass ☐ Fail — observed: `______________________________`
+
+### TC-22 · Password reset by OTP
+
+| | |
+|---|---|
+| **Steps** | Use "forgot password" with a **real** registered address, then with an address that has no account. |
+| **Expect** | Registered: an OTP arrives and the reset completes. Unregistered: a clear *"No account found"* rather than a silent failure or a raw Supabase error. |
+| **Why** | RC2 moved reset to `signInWithOtp` and sanitises error messages. The unregistered path depends on the `email_exists` RPC. |
+
+☐ Pass ☐ Fail — observed: `______________________________`
+
+---
+
 ## Summary
 
 | Section | Cases | Pass | Fail | Blocked |
@@ -352,9 +481,11 @@ timeline component, all of which other screens use.
 | E · Realtime | 2 | | | |
 | F · Mobile | 13 | | | |
 | G · Regression | 12 | | | |
-| **Total** | **41** | | | |
+| **H · Authentication (new)** | **8** | | | |
+| **Total** | **49** | | | |
 
-**Must pass to go live:** TC-04, TC-05, TC-09, TC-10, **TC-11**, TC-13, TC-14.
+**Must pass to go live:** TC-04, TC-05, TC-09, TC-10, **TC-11**, TC-13, TC-14,
+**TC-19**.
 
 Failures:
 

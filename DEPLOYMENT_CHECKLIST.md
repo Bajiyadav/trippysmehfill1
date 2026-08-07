@@ -1,6 +1,9 @@
-# Deployment Checklist — Phase 3
+# Deployment Checklist — RC2
 
-Everything to verify **before** Phase 3 reaches production. Work top to bottom;
+**Commit `6eadb35`** · Phase 3 payment verification + merged OTP improvements
+· Migrations **0001 – 0009**
+
+Everything to verify **before** RC2 reaches production. Work top to bottom;
 each section gates the next.
 
 Companion documents:
@@ -374,7 +377,118 @@ SELECT count(*) FROM public.orders o
 - [ ] `payment_status` counts unchanged from before
 - [ ] Join query runs
 
-### 4.5 Rollback readiness
+### 4.6 Migrations 0008 and 0009 — merged from upstream
+
+Apply **after** 0007. These were renumbered from upstream's `0006`/`0007`, which
+collided with ours; git reported no conflict because the filenames differ.
+
+> Their internal headers still read `0006` and `0007` from before the renumber.
+> **The filenames are authoritative.** Cosmetic, but it misleads anyone reading
+> the file top-down.
+
+| | Migration | Adds |
+|---|---|---|
+| 0008 | `fix_profiles_rls` | `GRANT SELECT, INSERT, UPDATE` on `profiles` to `authenticated`; clean `profiles_select_own` / `_insert_own` / `_update_own` policies; `protect_privileged_profile_columns()` trigger blocking a customer from changing their own `role`, `is_approved` or `account_status` |
+| 0009 | `profiles_wallet_referral` | `wallet_balance` (default `0.00`), `referral_code` (`TRIPPY-XXXX-1234`), `phone_exists(text)` RPC, and a replaced `handle_new_user_signup()` |
+
+- [ ] 0008 applied
+- [ ] 0009 applied
+- [ ] Both re-applied once to confirm idempotency (harness proves this; confirm on yours)
+
+### 4.7 Auth trigger and profile creation — **the RC2 critical path**
+
+RC2 removed the client-side profile creation. `AuthModal` no longer builds a
+`UserProfile` after OTP verification; `handle_new_user_signup()` does it on
+`INSERT INTO auth.users`.
+
+> **0009 replaces that function but never creates the trigger that calls it.**
+> The trigger — `on_auth_user_created` — comes from **0003**.
+>
+> ```
+> 0003  CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users
+>         EXECUTE FUNCTION public.handle_new_user_signup();
+> 0009  CREATE OR REPLACE FUNCTION public.handle_new_user_signup()   ← function only
+> ```
+>
+> Apply 0009 without 0003 and you get a correct function **nothing calls**. Every
+> signup then produces an auth user with no profile row and no role — and the
+> browser still shows success. There is no error to notice.
+>
+> Your database was built from `phase2_schema.sql`, which contains none of the
+> numbered migrations, so 0003 has very likely never run.
+
+```sql
+-- ============ AUTH VERIFICATION — run after the full chain ============
+
+-- 1. Verify the auth.users trigger exists
+SELECT tgname,
+       CASE tgenabled WHEN 'O' THEN 'enabled' WHEN 'D' THEN '*** DISABLED ***'
+                      ELSE tgenabled::text END AS state
+  FROM pg_trigger
+ WHERE tgrelid = 'auth.users'::regclass AND NOT tgisinternal;
+-- expect a row: on_auth_user_created | enabled
+
+-- 2. Verify handle_new_user_signup() exists
+SELECT CASE WHEN to_regprocedure('public.handle_new_user_signup()') IS NULL
+            THEN '*** MISSING — signups will not create a profile ***'
+            ELSE 'PRESENT' END AS signup_function;
+
+-- 3. Verify the trigger actually points at it
+SELECT p.proname AS function_called
+  FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+ WHERE t.tgrelid = 'auth.users'::regclass AND NOT t.tgisinternal;
+-- expect: handle_new_user_signup
+
+-- 4. Verify the payment trigger survived 0008 and 0009
+SELECT tgname, tgenabled FROM pg_trigger
+ WHERE tgrelid = 'public.orders'::regclass
+   AND tgname = 'trg_enforce_customer_order_update';
+-- expect one row, tgenabled = 'O'
+
+-- 5. Verify every auth RPC the app calls
+SELECT to_regprocedure('public.email_exists(text)')       AS email_exists,
+       to_regprocedure('public.lookup_login_email(text)') AS lookup_login_email,
+       to_regprocedure('public.phone_exists(text)')       AS phone_exists;
+-- expect all three non-null
+
+-- 6. Verify the new profile columns
+SELECT column_name, data_type, column_default
+  FROM information_schema.columns
+ WHERE table_name = 'profiles' AND column_name IN ('wallet_balance','referral_code')
+ ORDER BY 1;
+-- expect 2 rows; wallet_balance defaults to 0.00
+```
+
+- [ ] **4.7.1** `on_auth_user_created` present on `auth.users` and enabled
+- [ ] **4.7.2** `handle_new_user_signup()` present
+- [ ] **4.7.3** The trigger points at that function
+- [ ] **4.7.4** Payment trigger still installed after 0008/0009
+- [ ] **4.7.5** All three auth RPCs present
+- [ ] **4.7.6** `wallet_balance` and `referral_code` columns exist
+
+**Live proof — do this after deploying, before announcing:**
+
+Sign up with a fresh address, then:
+
+```sql
+SELECT email, full_name, phone, role, wallet_balance, referral_code, is_approved
+  FROM public.profiles WHERE email = '<the address you used>';
+```
+
+- [ ] Exactly one row, `role = 'customer'`, `wallet_balance = 0.00`,
+      `referral_code` shaped `TRIPPY-XXXX-1234`
+
+```sql
+-- and no duplicates, which would mean two things are creating profiles
+SELECT email, count(*) FROM public.profiles GROUP BY 1 HAVING count(*) > 1;
+```
+
+- [ ] No rows
+
+This is **TC-19** in [MANUAL_TEST_PLAN.md](MANUAL_TEST_PLAN.md) and it is a
+must-pass gate.
+
+### 4.8 Rollback readiness
 
 - [ ] `supabase/migrations/0007_payment_verification_down.sql` is on hand
 - [ ] You have read the **lossy** steps in [ROLLBACK_PLAN.md](ROLLBACK_PLAN.md)
@@ -500,18 +614,27 @@ SELECT count(*) AS completed_without_audit
 
 **Blockers — do not deploy with any of these unresolved:**
 
-- [ ] Phase 3 committed, reviewed, merged to `main`
+- [ ] RC2 committed, reviewed, merged to `main`, tagged `rc2`
 - [ ] Database backup taken, timestamp recorded
-- [ ] Migration 0007 applied, postflight §4.4 all green
+- [ ] **Migrations 0001 – 0009 applied in order**, postflight §4.4 all green
+- [ ] **`on_auth_user_created` wired to `handle_new_user_signup()`** (§4.7) —
+      without it every signup silently produces no profile
+- [ ] **Payment trigger still installed after 0008/0009** (§4.7.4)
+- [ ] **A real signup creates a `profiles` row** (§4.7 live proof / TC-19)
 - [ ] `orders` published to Realtime **and** the Realtime service enabled
 - [ ] At least one admin account exists
 - [ ] Env vars set in production **and redeployed afterwards**
-- [ ] Auth Site URL points at production
+- [ ] Auth Site URL points at production; a real OTP was received
 - [ ] `npm run build` succeeds from a clean `npm ci`
 
 **Known, accepted, not blockers:**
 
-- Main bundle 342 kB gzip, over Vite's 500 kB raw warning threshold
+- **Wallet and referral are schema-only.** 0009 adds the columns and generates
+  codes; nothing spends, credits or redeems, and the 25% OFF referral is not
+  wired into checkout. Dormant, not broken.
+- **0008 / 0009 carry stale internal headers** reading `0006` / `0007` from
+  before the renumber. The filenames are authoritative.
+- Main bundle 344 kB gzip, over Vite's 500 kB raw warning threshold
 - `initialOrders` seeds four example orders with invented names as a pre-Supabase
   fallback (flagged since Phase 1)
 - Order numbers can collide under concurrent checkout — `nextOrderNumber` reads
