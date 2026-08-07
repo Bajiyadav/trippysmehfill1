@@ -1,6 +1,7 @@
 import React from 'react';
 import { Order, OrderStatus } from '../../types';
 import { X, CheckCircle2, Clock, CookingPot, Bike, MapPin, Phone } from 'lucide-react';
+import { openWhatsAppSupport } from '../../lib/whatsapp';
 
 interface OrderTrackerModalProps {
   order: Order | null;
@@ -143,6 +144,15 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* WhatsApp Support Action */}
+          <button
+            onClick={() => openWhatsAppSupport({ name: order.customer_name, phone: order.customer_phone, orderNumber: order.order_number })}
+            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-md transition text-xs flex items-center justify-center gap-2"
+          >
+            <Phone className="w-4 h-4" />
+            <span>Need Help? Chat on WhatsApp</span>
+          </button>
 
           {/* Leave Feedback Action if Delivered */}
           {order.status === 'delivered' && onLeaveFeedback && (

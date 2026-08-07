@@ -65,7 +65,7 @@ export interface MenuItem {
 
 export type OrderStatus = 'pending' | 'cooking' | 'assigned' | 'out_for_delivery' | 'delivered' | 'cancelled';
 export type PaymentMethod = 'COD' | 'UPI' | 'Card' | 'Razorpay';
-export type PaymentStatus = 'pending' | 'completed' | 'failed' | 'refunded';
+export type PaymentStatus = 'pending' | 'pending_verification' | 'completed' | 'paid' | 'failed' | 'refunded';
 
 export interface OrderItem {
   dish_id: string;
@@ -91,6 +91,8 @@ export interface Order {
   payment_method: PaymentMethod;
   payment_status: PaymentStatus;
   upi_transaction_id?: string;
+  utr_number?: string;
+  payment_time?: string;
   status: OrderStatus;
   driver_id?: string;
   driver_name?: string;

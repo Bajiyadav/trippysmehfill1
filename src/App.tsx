@@ -51,8 +51,9 @@ import {
   initialFeedback,
   initialBanners
 } from './lib/initialData';
-import { FoodCategory, MenuItem, Order, OrderStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner, GalleryItem } from './types';
+import { FoodCategory, MenuItem, Order, OrderStatus, PaymentStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner, GalleryItem } from './types';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { playKitchenAlertSound } from './lib/sound';
 
 function MainApp() {
   const { user } = useAuth();
@@ -218,7 +219,44 @@ function MainApp() {
     setActiveTrackingOrder(newOrder);
   };
 
-  const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus, driverId?: string, driverName?: string) => {
+  // Supabase Realtime Subscription for Instant Live Order Sync across Admin & Customers
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    const channel = supabase
+      .channel('public:orders:realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        (payload) => {
+          console.log('[Realtime] Order payload received:', payload);
+          if (payload.eventType === 'INSERT') {
+            const newOrd = payload.new as Order;
+            playKitchenAlertSound();
+            setOrders(prev => [newOrd, ...prev.filter(o => o.id !== newOrd.id)]);
+          } else if (payload.eventType === 'UPDATE') {
+            const updatedOrd = payload.new as Order;
+            setOrders(prev => prev.map(o => (o.id === updatedOrd.id ? { ...o, ...updatedOrd } : o)));
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = (payload.old as any)?.id;
+            if (deletedId) setOrders(prev => prev.filter(o => o.id !== deletedId));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const handleUpdateOrderStatus = async (
+    orderId: string,
+    status: OrderStatus,
+    driverId?: string,
+    driverName?: string,
+    paymentStatus?: PaymentStatus
+  ) => {
     setOrders(prev =>
       prev.map(o => {
         if (o.id === orderId) {
@@ -226,7 +264,8 @@ function MainApp() {
             ...o,
             status,
             ...(driverId ? { driver_id: driverId } : {}),
-            ...(driverName ? { driver_name: driverName } : {})
+            ...(driverName ? { driver_name: driverName } : {}),
+            ...(paymentStatus ? { payment_status: paymentStatus } : {})
           };
         }
         return o;
@@ -234,11 +273,14 @@ function MainApp() {
     );
 
     if (isSupabaseConfigured) {
-      const { error } = await supabase.from('orders').update({
+      const updateData: Record<string, any> = {
         status,
         ...(driverId ? { driver_id: driverId } : {}),
-        ...(driverName ? { driver_name: driverName } : {})
-      }).eq('id', orderId);
+        ...(driverName ? { driver_name: driverName } : {}),
+        ...(paymentStatus ? { payment_status: paymentStatus } : {})
+      };
+
+      const { error } = await supabase.from('orders').update(updateData).eq('id', orderId);
 
       if (error) {
         console.error('Failed to update order status in Supabase:', error.message);

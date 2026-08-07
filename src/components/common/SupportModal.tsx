@@ -1,5 +1,6 @@
 import React from 'react';
 import { X, Phone, Mail, MapPin, Clock, MessageSquare, ShieldCheck, HelpCircle } from 'lucide-react';
+import { openWhatsAppSupport } from '../../lib/whatsapp';
 
 interface SupportModalProps {
   isOpen: boolean;
@@ -34,11 +35,10 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) =
 
         {/* Direct Contact Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <a
-            href="https://wa.me/918569955929"
-            target="_blank"
-            rel="noreferrer"
-            className="p-4 bg-[#181818] hover:bg-white/5 border border-white/10 rounded-2xl flex items-center gap-3 transition group"
+          <button
+            type="button"
+            onClick={() => openWhatsAppSupport()}
+            className="p-4 bg-[#181818] hover:bg-white/5 border border-white/10 rounded-2xl flex items-center gap-3 transition group text-left w-full"
           >
             <div className="p-2.5 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white transition">
               <Phone className="w-5 h-5" />
@@ -47,7 +47,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) =
               <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Kitchen Hotline / WhatsApp</p>
               <p className="text-sm font-extrabold text-white font-mono">+91 85699 55929</p>
             </div>
-          </a>
+          </button>
 
           <a
             href="mailto:trippysmehfill.kitchen@gmail.com"

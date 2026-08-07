@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { Order, MenuItem } from '../../types';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { openWhatsAppSupport } from '../../lib/whatsapp';
 import {
   User,
   ShoppingBag,
@@ -364,11 +365,11 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
           {/* Bottom Logout */}
           <div className="pt-4 border-t border-white/10 mt-4 space-y-2">
             <button
-              onClick={onOpenSupport}
-              className="w-full py-2 px-3 bg-[#181818] hover:bg-white/10 text-gray-300 text-xs font-bold rounded-xl flex items-center gap-2 border border-white/10 transition"
+              onClick={() => openWhatsAppSupport({ name: user.full_name, phone: user.phone })}
+              className="w-full py-2 px-3 bg-[#181818] hover:bg-white/10 text-gray-300 text-xs font-bold rounded-xl flex items-center gap-2 border border-white/10 transition text-left"
             >
               <HelpCircle className="w-4 h-4 text-[#C5A059]" />
-              <span>Customer Support</span>
+              <span>WhatsApp Customer Support</span>
             </button>
 
             <button

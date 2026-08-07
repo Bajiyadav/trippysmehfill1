@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
-import { Order, OrderStatus, UserProfile } from '../../types';
-import { Bike, Phone, MapPin, CheckCircle2, Clock, XCircle, ChevronDown } from 'lucide-react';
+import { Order, OrderStatus, PaymentStatus, UserProfile } from '../../types';
+import { Bike, Phone, MapPin, CheckCircle2, Clock, XCircle, ChevronDown, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { formatDistanceText, getRouteDirectionsUrl } from '../../lib/geoUtils';
 
 interface LiveOrdersViewProps {
   orders: Order[];
   drivers: UserProfile[];
-  onUpdateOrderStatus: (orderId: string, status: OrderStatus, driverId?: string, driverName?: string) => void;
+  onUpdateOrderStatus: (orderId: string, status: OrderStatus, driverId?: string, driverName?: string, paymentStatus?: PaymentStatus) => void;
 }
 
 export const LiveOrdersView: React.FC<LiveOrdersViewProps> = ({
@@ -17,10 +17,10 @@ export const LiveOrdersView: React.FC<LiveOrdersViewProps> = ({
 }) => {
   const [selectedDrivers, setSelectedDrivers] = useState<Record<string, string>>({});
 
-  const handleAssignAndStatus = (orderId: string, status: OrderStatus) => {
+  const handleAssignAndStatus = (orderId: string, status: OrderStatus, paymentStatus?: PaymentStatus) => {
     const driverId = selectedDrivers[orderId];
     const driverObj = drivers.find(d => d.id === driverId);
-    onUpdateOrderStatus(orderId, status, driverObj?.id, driverObj?.full_name);
+    onUpdateOrderStatus(orderId, status, driverObj?.id, driverObj?.full_name, paymentStatus);
   };
 
   return (
@@ -130,6 +130,66 @@ export const LiveOrdersView: React.FC<LiveOrdersViewProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* UPI Payment Settlement Verification Card */}
+              {order.payment_method === 'UPI' && (
+                <div className={`p-3 rounded-xl border space-y-2 text-xs ${
+                  order.payment_status === 'paid'
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                    : order.payment_status === 'failed'
+                    ? 'bg-rose-50 border-rose-300 text-rose-900'
+                    : 'bg-amber-50 border-amber-300 text-amber-900'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-1">
+                      {order.payment_status === 'paid' ? (
+                        <>
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>✓ UPI Payment Verified & Paid</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                          <span>⚠️ UPI Payment Verification Pending</span>
+                        </>
+                      )}
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-white/80 font-mono font-bold text-[10px] uppercase border">
+                      {order.payment_status}
+                    </span>
+                  </div>
+
+                  <div className="bg-white/90 p-2 rounded-lg border space-y-1 font-mono text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">UTR / Ref ID:</span>
+                      <strong className="text-gray-900 font-bold">{order.utr_number || order.upi_transaction_id || 'Not Submitted'}</strong>
+                    </div>
+                    {order.payment_time && (
+                      <div className="flex justify-between text-[10px] text-gray-500">
+                        <span>Submitted Time:</span>
+                        <span>{new Date(order.payment_time).toLocaleTimeString()}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {(order.payment_status === 'pending_verification' || order.payment_status === 'pending') && (
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        onClick={() => handleAssignAndStatus(order.id, 'cooking', 'paid')}
+                        className="py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-xs transition shadow-sm"
+                      >
+                        ✓ Approve & Cook
+                      </button>
+                      <button
+                        onClick={() => handleAssignAndStatus(order.id, 'cancelled', 'failed')}
+                        className="py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-lg text-xs transition shadow-sm"
+                      >
+                        ✕ Reject Payment
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Items List */}
               <div className="bg-gray-50 rounded-xl p-3 space-y-1 text-xs">

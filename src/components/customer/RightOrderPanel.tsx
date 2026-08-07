@@ -92,8 +92,10 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
       delivery_fee: deliveryFee,
       total_amount: grandTotal,
       payment_method: paymentMethod,
-      payment_status: paymentMethod === 'UPI' ? 'completed' : 'pending',
-      upi_transaction_id: upiTxnId,
+      payment_status: paymentMethod === 'UPI' ? 'pending_verification' : 'pending',
+      upi_transaction_id: paymentMethod === 'UPI' ? upiTxnId.trim() : undefined,
+      utr_number: paymentMethod === 'UPI' ? upiTxnId.trim() : undefined,
+      payment_time: paymentMethod === 'UPI' ? new Date().toISOString() : undefined,
       status: 'pending',
       customer_ip: sec.ipAddress,
       order_latitude: sec.latitude,
@@ -146,6 +148,9 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
     }
   };
 
+  const activeUpiId = settings.restaurant_upi_id || '9876543210@ybl';
+  const upiDeepLink = `upi://pay?pa=${encodeURIComponent(activeUpiId)}&pn=${encodeURIComponent("Trippy's Mehfill")}&am=${grandTotal}&cu=INR&tn=${encodeURIComponent('Food Order Payment')}`;
+
   return (
     <div className={`bg-[#121212] border border-white/10 rounded-3xl p-5 shadow-2xl flex flex-col justify-between text-gray-200 ${
       isDrawer ? 'h-full border-none rounded-none' : 'sticky top-24 max-h-[calc(100vh-7rem)] overflow-y-auto'
@@ -182,7 +187,7 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
         {placedOrderSuccess ? (
           <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-center space-y-2 animate-in fade-in">
             <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
-            <h3 className="text-sm font-black text-white">Order {placedOrderSuccess.order_number} Confirmed!</h3>
+            <h3 className="text-sm font-black text-white">Order {placedOrderSuccess.order_number} Successfully Placed!</h3>
             <p className="text-xs text-emerald-300">
               Sent to kitchen! Your food is now being prepared fresh.
             </p>
@@ -329,31 +334,58 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
                 </button>
               </div>
 
-              {/* UPI QR Display */}
+              {/* UPI Payment Section */}
               {paymentMethod === 'UPI' && (
-                <div className="p-3 bg-[#181818] rounded-xl border border-white/10 text-center space-y-2">
-                  <p className="text-xs font-bold text-[#C5A059]">
-                    Scan & Pay ₹{grandTotal}
-                  </p>
-                  <div className="bg-white p-2 rounded-xl inline-block border border-white/20">
+                <div className="p-3.5 bg-[#181818] rounded-2xl border border-white/10 text-center space-y-3">
+                  <div className="space-y-1">
+                    <p className="text-xs font-extrabold text-[#C5A059]">
+                      Scan & Pay ₹{grandTotal}
+                    </p>
+                    <p className="text-[10px] text-gray-400 max-w-xs mx-auto">
+                      Scan QR code with any UPI app or tap below to open in Google Pay / PhonePe / Paytm.
+                    </p>
+                  </div>
+
+                  {/* QR Code Container */}
+                  <div className="bg-white p-2.5 rounded-2xl inline-block border border-white/20 shadow-md">
                     <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(
-                        `upi://pay?pa=${settings.restaurant_upi_id}&pn=TrippysMehfill&am=${grandTotal}&cu=INR`
-                      )}`}
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(upiDeepLink)}`}
                       alt="UPI QR Code"
-                      className="w-28 h-28 mx-auto"
+                      className="w-32 h-32 mx-auto"
                     />
                   </div>
-                  <p className="font-mono text-xs text-white bg-[#121212] py-1 px-2 rounded border border-[#C5A059]/30">
-                    {settings.restaurant_upi_id}
+
+                  <p className="font-mono text-xs text-amber-300 bg-[#121212] py-1 px-2.5 rounded-xl border border-[#C5A059]/30 inline-block font-bold">
+                    {activeUpiId}
                   </p>
+
+                  {/* Open in UPI Apps Deep Link Button */}
+                  <a
+                    href={upiDeepLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    <span>Open in UPI Apps (GPay / PhonePe / Paytm / BHIM)</span>
+                  </a>
+
+                  {/* Verification Notice */}
+                  <div className="p-2.5 bg-[#121212] border border-amber-500/30 rounded-xl text-left space-y-1">
+                    <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                      ⚠️ Manual Payment Verification Required
+                    </p>
+                    <p className="text-[10px] text-gray-300 leading-relaxed">
+                      Static QR codes cannot automatically verify bank settlements. After making your payment, please enter your 12-digit UPI UTR Ref ID below so kitchen admin can approve and prepare your food.
+                    </p>
+                  </div>
 
                   <input
                     type="text"
                     value={upiTxnId}
                     onChange={(e) => setUpiTxnId(e.target.value)}
-                    placeholder="Enter 12-digit UPI Txn Ref ID"
-                    className="w-full px-3 py-1.5 bg-[#121212] border border-white/10 rounded-xl text-xs font-mono text-white outline-none focus:border-[#C5A059]"
+                    placeholder="Enter 12-digit UPI UTR / Txn Ref ID"
+                    className="w-full px-3 py-2 bg-[#121212] border border-white/15 rounded-xl text-xs font-mono text-white outline-none focus:border-[#C5A059] placeholder-gray-500"
                   />
                 </div>
               )}
