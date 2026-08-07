@@ -79,6 +79,9 @@ ALTER TABLE public.profiles
 -- `email UNIQUE` is case-sensitive, but `sendPasswordResetOTP` looks accounts up
 -- with `.ilike('email', ...).maybeSingle()`. Two rows differing only in case
 -- would make that call error, so uniqueness is enforced case-insensitively.
+-- `email UNIQUE` is backed by a constraint, so the constraint has to go first;
+-- dropping the index directly fails with 2BP01.
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_email_key;
 DROP INDEX IF EXISTS public.profiles_email_key;
 CREATE UNIQUE INDEX IF NOT EXISTS profiles_email_lower_key
   ON public.profiles (lower(email));

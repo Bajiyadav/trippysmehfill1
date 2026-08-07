@@ -149,11 +149,14 @@ DROP POLICY IF EXISTS orders_team_read       ON public.orders;
 DROP POLICY IF EXISTS orders_team_write      ON public.orders;
 DROP POLICY IF EXISTS orders_driver_update   ON public.orders;
 
+-- `orders.customer_id` and `orders.driver_id` are TEXT in this project while
+-- `auth.uid()` is uuid, so both sides are cast to text (`text = uuid` raises
+-- 42883).
 CREATE POLICY orders_select_own ON public.orders
-  FOR SELECT TO authenticated USING (customer_id = auth.uid());
+  FOR SELECT TO authenticated USING (customer_id::text = auth.uid()::text);
 
 CREATE POLICY orders_insert_own ON public.orders
-  FOR INSERT TO authenticated WITH CHECK (customer_id = auth.uid());
+  FOR INSERT TO authenticated WITH CHECK (customer_id::text = auth.uid()::text);
 
 -- Kitchen, admin and drivers see the live queue.
 CREATE POLICY orders_team_read ON public.orders
@@ -165,8 +168,8 @@ CREATE POLICY orders_team_write ON public.orders
 -- A driver may only progress an order that is assigned to them.
 CREATE POLICY orders_driver_update ON public.orders
   FOR UPDATE TO authenticated
-  USING (driver_id = auth.uid())
-  WITH CHECK (driver_id = auth.uid());
+  USING (driver_id::text = auth.uid()::text)
+  WITH CHECK (driver_id::text = auth.uid()::text);
 
 -- 6. feedback ---------------------------------------------------------------
 
@@ -185,6 +188,39 @@ DROP POLICY IF EXISTS inventory_staff_all ON public.inventory;
 
 CREATE POLICY inventory_staff_all ON public.inventory
   FOR ALL TO authenticated USING (public.is_admin_or_staff()) WITH CHECK (public.is_admin_or_staff());
+
+-- 7b. Legacy tables ---------------------------------------------------------
+-- `drivers`, `payments` and `restaurant_assets` exist in the project but are
+-- not queried by the client. They had RLS enabled with zero policies, which is
+-- already closed; staff-only policies are added so the ERP can use them without
+-- someone reaching for `ENABLE ROW LEVEL SECURITY ... DISABLE` later.
+-- `gallery_images` is public-readable like the menu.
+
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['drivers', 'payments', 'restaurant_assets'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = t) THEN
+      EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+      EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', t || '_staff_all', t);
+      EXECUTE format(
+        'CREATE POLICY %I ON public.%I FOR ALL TO authenticated'
+        || ' USING (public.is_admin_or_staff()) WITH CHECK (public.is_admin_or_staff())',
+        t || '_staff_all', t
+      );
+    END IF;
+  END LOOP;
+
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'gallery_images') THEN
+    ALTER TABLE public.gallery_images ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS gallery_images_public_read ON public.gallery_images;
+    DROP POLICY IF EXISTS gallery_images_staff_write ON public.gallery_images;
+    CREATE POLICY gallery_images_public_read ON public.gallery_images
+      FOR SELECT TO anon, authenticated USING (true);
+    CREATE POLICY gallery_images_staff_write ON public.gallery_images
+      FOR ALL TO authenticated USING (public.is_admin_or_staff()) WITH CHECK (public.is_admin_or_staff());
+  END IF;
+END $$;
 
 -- 8. Realtime ---------------------------------------------------------------
 -- Header.tsx subscribes to `realtime-live-orders-channel`. Realtime respects
