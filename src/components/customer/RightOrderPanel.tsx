@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { ShoppingBag, Trash2, Plus, Minus, MapPin, QrCode, DollarSign, CheckCircle2, Shield, AlertCircle } from 'lucide-react';
 import { Order, PaymentMethod } from '../../types';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { ordersService } from '../../services/supabase';
 import { playKitchenAlertSound } from '../../lib/sound';
 
 interface RightOrderPanelProps {
@@ -96,7 +97,8 @@ export const RightOrderPanel: React.FC<RightOrderPanelProps> = ({
 
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('orders').insert([newOrder]);
+        const created = await ordersService.createOrder(newOrder);
+        newOrder.id = created.id;
       } catch (err) {
         console.error('Failed to sync order to Supabase:', err);
       }

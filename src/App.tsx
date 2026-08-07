@@ -53,6 +53,15 @@ import {
 } from './lib/initialData';
 import { FoodCategory, MenuItem, Order, OrderStatus, UserProfile, InventoryItem, Feedback, PromotionalBanner, GalleryItem } from './types';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
+import {
+  menuService,
+  ordersService,
+  inventoryService,
+  feedbackService,
+  galleryService,
+  bannersService,
+  realtimeService,
+} from './services/supabase';
 
 function MainApp() {
   const { user } = useAuth();
@@ -66,51 +75,16 @@ function MainApp() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLocation, setSelectedLocation] = useState('Goenka University Campus - Gate 5');
 
-  // App Data States
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
-    const saved = localStorage.getItem('trippys_menu');
-    return saved ? JSON.parse(saved) : initialMenuItems;
-  });
-
-  const [orders, setOrders] = useState<Order[]>(() => {
-    const saved = localStorage.getItem('trippys_orders');
-    return saved ? JSON.parse(saved) : initialOrders;
-  });
-
-  const [pendingUsers, setPendingUsers] = useState<UserProfile[]>(() => {
-    const saved = localStorage.getItem('trippys_pending');
-    return saved ? JSON.parse(saved) : initialPendingRegistrations;
-  });
-
-  const [staffList, setStaffList] = useState<UserProfile[]>(() => {
-    const saved = localStorage.getItem('trippys_staff');
-    return saved ? JSON.parse(saved) : initialStaffAndDrivers;
-  });
-
-  const [customersList, setCustomersList] = useState<UserProfile[]>(() => {
-    const saved = localStorage.getItem('trippys_customers');
-    return saved ? JSON.parse(saved) : initialCustomers;
-  });
-
-  const [galleryItems, setGalleryItems] = useState<GalleryItem[]>(() => {
-    const saved = localStorage.getItem('trippys_gallery');
-    return saved ? JSON.parse(saved) : initialGalleryItems;
-  });
-
-  const [inventory, setInventory] = useState<InventoryItem[]>(() => {
-    const saved = localStorage.getItem('trippys_inventory');
-    return saved ? JSON.parse(saved) : initialInventory;
-  });
-
-  const [feedback, setFeedback] = useState<Feedback[]>(() => {
-    const saved = localStorage.getItem('trippys_feedback');
-    return saved ? JSON.parse(saved) : initialFeedback;
-  });
-
-  const [banners, setBanners] = useState<PromotionalBanner[]>(() => {
-    const saved = localStorage.getItem('trippys_banners');
-    return saved ? JSON.parse(saved) : initialBanners;
-  });
+  // App Data States (Initialized from initial data fallbacks, hydrated via Supabase)
+  const [menuItems, setMenuItems] = useState<MenuItem[]>(initialMenuItems);
+  const [orders, setOrders] = useState<Order[]>(initialOrders);
+  const [pendingUsers, setPendingUsers] = useState<UserProfile[]>(initialPendingRegistrations);
+  const [staffList, setStaffList] = useState<UserProfile[]>(initialStaffAndDrivers);
+  const [customersList, setCustomersList] = useState<UserProfile[]>(initialCustomers);
+  const [galleryItems, setGalleryItems] = useState<GalleryItem[]>(initialGalleryItems);
+  const [inventory, setInventory] = useState<InventoryItem[]>(initialInventory);
+  const [feedback, setFeedback] = useState<Feedback[]>(initialFeedback);
+  const [banners, setBanners] = useState<PromotionalBanner[]>(initialBanners);
 
   // Modals
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -120,44 +94,73 @@ function MainApp() {
   const [activeTrackingOrder, setActiveTrackingOrder] = useState<Order | null>(null);
   const [feedbackOrder, setFeedbackOrder] = useState<Order | null>(null);
 
-  // Sync to localStorage
-  useEffect(() => { localStorage.setItem('trippys_menu', JSON.stringify(menuItems)); }, [menuItems]);
-  useEffect(() => { localStorage.setItem('trippys_orders', JSON.stringify(orders)); }, [orders]);
-  useEffect(() => { localStorage.setItem('trippys_pending', JSON.stringify(pendingUsers)); }, [pendingUsers]);
-  useEffect(() => { localStorage.setItem('trippys_staff', JSON.stringify(staffList)); }, [staffList]);
-  useEffect(() => { localStorage.setItem('trippys_customers', JSON.stringify(customersList)); }, [customersList]);
-  useEffect(() => { localStorage.setItem('trippys_gallery', JSON.stringify(galleryItems)); }, [galleryItems]);
-  useEffect(() => { localStorage.setItem('trippys_inventory', JSON.stringify(inventory)); }, [inventory]);
-  useEffect(() => { localStorage.setItem('trippys_feedback', JSON.stringify(feedback)); }, [feedback]);
-  useEffect(() => { localStorage.setItem('trippys_banners', JSON.stringify(banners)); }, [banners]);
+  // Load live data from Supabase Services
+  const loadAllSupabaseData = async () => {
+    if (!isSupabaseConfigured) return;
 
-  // Load live data from Supabase if connected
+    try {
+      const [
+        fetchedMenu,
+        fetchedOrders,
+        fetchedInventory,
+        fetchedFeedback,
+        fetchedGallery,
+        fetchedBanners,
+      ] = await Promise.all([
+        menuService.fetchMenuItems().catch(() => null),
+        ordersService.fetchOrders().catch(() => null),
+        inventoryService.fetchInventory().catch(() => null),
+        feedbackService.fetchFeedback().catch(() => null),
+        galleryService.fetchGalleryItems().catch(() => null),
+        bannersService.fetchBanners().catch(() => null),
+      ]);
+
+      if (fetchedMenu && fetchedMenu.length > 0) setMenuItems(fetchedMenu);
+      if (fetchedOrders && fetchedOrders.length > 0) setOrders(fetchedOrders);
+      if (fetchedInventory && fetchedInventory.length > 0) setInventory(fetchedInventory);
+      if (fetchedFeedback && fetchedFeedback.length > 0) setFeedback(fetchedFeedback);
+      if (fetchedGallery && fetchedGallery.length > 0) setGalleryItems(fetchedGallery);
+      if (fetchedBanners && fetchedBanners.length > 0) setBanners(fetchedBanners);
+
+      // Fetch Profile Roles & Pending Registrations
+      const { data: profs } = await supabase.from('profiles').select('*');
+      if (profs && profs.length > 0) {
+        const pending = profs.filter((p: any) => !p.is_approved && p.role === 'customer');
+        const team = profs.filter((p: any) => p.role === 'admin' || p.role === 'staff' || p.role === 'driver');
+        const custs = profs.filter((p: any) => p.role === 'customer' && p.is_approved);
+        setPendingUsers(pending as UserProfile[]);
+        if (team.length > 0) setStaffList(team as UserProfile[]);
+        if (custs.length > 0) setCustomersList(custs as UserProfile[]);
+      }
+    } catch (err) {
+      console.error('Supabase fetch error:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadAllSupabaseData();
+  }, []);
+
+  // Realtime Postgres Subscriptions for Live ERP Order & Inventory Queue Updates
   useEffect(() => {
     if (!isSupabaseConfigured) return;
 
-    async function loadSupabaseData() {
-      try {
-        const { data: menu } = await supabase.from('menu_items').select('*').order('display_order');
-        if (menu && menu.length > 0) setMenuItems(menu as MenuItem[]);
+    const ordersChannel = realtimeService.subscribeToOrders(() => {
+      ordersService.fetchOrders().then((updatedOrders) => {
+        if (updatedOrders) setOrders(updatedOrders);
+      }).catch(console.error);
+    });
 
-        const { data: ords } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-        if (ords && ords.length > 0) setOrders(ords as Order[]);
+    const inventoryChannel = realtimeService.subscribeToInventory(() => {
+      inventoryService.fetchInventory().then((updatedInventory) => {
+        if (updatedInventory) setInventory(updatedInventory);
+      }).catch(console.error);
+    });
 
-        const { data: profs } = await supabase.from('profiles').select('*');
-        if (profs && profs.length > 0) {
-          const pending = profs.filter(p => !p.is_approved && p.role === 'customer');
-          const team = profs.filter(p => p.role === 'admin' || p.role === 'staff' || p.role === 'driver');
-          const custs = profs.filter(p => p.role === 'customer' && p.is_approved);
-          setPendingUsers(pending as UserProfile[]);
-          if (team.length > 0) setStaffList(team as UserProfile[]);
-          if (custs.length > 0) setCustomersList(custs as UserProfile[]);
-        }
-      } catch (err) {
-        console.error('Supabase fetch error', err);
-      }
-    }
-
-    loadSupabaseData();
+    return () => {
+      realtimeService.unsubscribe(ordersChannel);
+      realtimeService.unsubscribe(inventoryChannel);
+    };
   }, []);
 
   // Ensure default landing page is ALWAYS 'menu' (Home Page) on mount
@@ -172,12 +175,11 @@ function MainApp() {
         setActiveSection('menu');
       }
     } else if (user.role === 'admin' && activeSection === 'menu') {
-      // If admin logs in, switch to admin dashboard
       setActiveSection('admin');
     }
   }, [user]);
 
-  // Logo Click Handler: Navigates to home/menu, resets filters, scrolls up, opens sign in if unauthenticated
+  // Logo Click Handler
   const handleLogoClick = () => {
     setActiveSection('menu');
     setSearchQuery('');
@@ -188,13 +190,13 @@ function MainApp() {
     }
   };
 
-  // Handlers
+  // Handlers wired to Supabase Data Layer
   const handleOrderPlaced = (newOrder: Order) => {
     setOrders(prev => [newOrder, ...prev]);
     setActiveTrackingOrder(newOrder);
   };
 
-  const handleUpdateOrderStatus = (orderId: string, status: OrderStatus, driverId?: string, driverName?: string) => {
+  const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus, driverId?: string, driverName?: string, driverPhone?: string) => {
     setOrders(prev =>
       prev.map(o => {
         if (o.id === orderId) {
@@ -202,23 +204,26 @@ function MainApp() {
             ...o,
             status,
             ...(driverId ? { driver_id: driverId } : {}),
-            ...(driverName ? { driver_name: driverName } : {})
+            ...(driverName ? { driver_name: driverName } : {}),
+            ...(driverPhone ? { driver_phone: driverPhone } : {})
           };
         }
         return o;
       })
     );
 
-    if (isSupabaseConfigured) {
-      supabase.from('orders').update({
-        status,
-        ...(driverId ? { driver_id: driverId } : {}),
-        ...(driverName ? { driver_name: driverName } : {})
-      }).eq('id', orderId);
+    try {
+      if (driverId && driverName) {
+        await ordersService.assignDriver(orderId, driverId, driverName, driverPhone || '');
+      } else {
+        await ordersService.updateOrderStatus(orderId, status);
+      }
+    } catch (err) {
+      console.error('Error updating order status in Supabase:', err);
     }
   };
 
-  const handleApproveUser = (userId: string) => {
+  const handleApproveUser = async (userId: string) => {
     const userToApprove = pendingUsers.find(u => u.id === userId);
     setPendingUsers(prev => prev.filter(u => u.id !== userId));
 
@@ -231,15 +236,15 @@ function MainApp() {
     }
 
     if (isSupabaseConfigured) {
-      supabase.from('profiles').update({ is_approved: true }).eq('id', userId);
+      await supabase.from('profiles').update({ is_approved: true }).eq('id', userId);
     }
   };
 
-  const handleRejectUser = (userId: string) => {
+  const handleRejectUser = async (userId: string) => {
     setPendingUsers(prev => prev.filter(u => u.id !== userId));
 
     if (isSupabaseConfigured) {
-      supabase.from('profiles').delete().eq('id', userId);
+      await supabase.from('profiles').delete().eq('id', userId);
     }
   };
 

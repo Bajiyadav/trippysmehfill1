@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CartItem, MenuItem, KitchenSettings } from '../types';
 import { initialKitchenSettings } from '../lib/initialData';
+import { settingsService } from '../services/supabase/settings';
 
 interface CartContextType {
   cart: CartItem[];
@@ -14,35 +15,28 @@ interface CartContextType {
   taxAmount: number;
   grandTotal: number;
   settings: KitchenSettings;
-  updateSettings: (newSettings: Partial<KitchenSettings>) => void;
+  updateSettings: (newSettings: Partial<KitchenSettings>) => Promise<void>;
+  refreshSettings: () => Promise<void>;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    const saved = localStorage.getItem('trippys_cart');
-    if (saved) {
-      try { return JSON.parse(saved); } catch { return []; }
-    }
-    return [];
-  });
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [settings, setSettings] = useState<KitchenSettings>(initialKitchenSettings);
 
-  const [settings, setSettings] = useState<KitchenSettings>(() => {
-    const saved = localStorage.getItem('trippys_settings');
-    if (saved) {
-      try { return JSON.parse(saved); } catch { return initialKitchenSettings; }
+  const refreshSettings = async () => {
+    try {
+      const liveSettings = await settingsService.fetchKitchenSettings();
+      setSettings(liveSettings);
+    } catch (err) {
+      console.error('Failed to load kitchen settings from Supabase:', err);
     }
-    return initialKitchenSettings;
-  });
+  };
 
   useEffect(() => {
-    localStorage.setItem('trippys_cart', JSON.stringify(cart));
-  }, [cart]);
-
-  useEffect(() => {
-    localStorage.setItem('trippys_settings', JSON.stringify(settings));
-  }, [settings]);
+    refreshSettings();
+  }, []);
 
   const addToCart = (menuItem: MenuItem) => {
     setCart(prev => {
@@ -78,8 +72,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearCart = () => setCart([]);
 
-  const updateSettings = (newSettings: Partial<KitchenSettings>) => {
-    setSettings(prev => ({ ...prev, ...newSettings }));
+  const updateSettings = async (newSettings: Partial<KitchenSettings>) => {
+    const updated = { ...settings, ...newSettings };
+    setSettings(updated);
+    try {
+      await settingsService.updateKitchenSettings(updated);
+    } catch (err) {
+      console.error('Failed to persist kitchen settings in Supabase:', err);
+    }
   };
 
   const totalCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -106,7 +106,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         taxAmount,
         grandTotal,
         settings,
-        updateSettings
+        updateSettings,
+        refreshSettings,
       }}
     >
       {children}

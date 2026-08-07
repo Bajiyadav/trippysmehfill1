@@ -40,6 +40,7 @@ interface AuthContextType {
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
   switchDemoRole: (role: UserRole) => void;
   refreshProfile: () => Promise<void>;
+  resetPassword: (email: string) => Promise<AuthResult>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -79,20 +80,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return profile as UserProfile;
     }
 
-    // First sign-in for this auth user: create a minimal profile from metadata.
+    // First sign-in for this auth user: create a profile from phone metadata.
     const meta = (authUser.user_metadata || {}) as Record<string, any>;
+    const userPhone = authUser.phone || meta.phone || '';
     const newProfile: UserProfile = {
       id: authUser.id,
       email: authUser.email || '',
-      full_name: meta.full_name || authUser.email?.split('@')[0] || 'Customer',
-      phone: meta.phone || '',
+      full_name: meta.full_name || (userPhone ? `User ${userPhone.slice(-4)}` : 'Customer'),
+      phone: userPhone,
       hostel_address: meta.hostel_address || '',
       role: 'customer',
       account_status: 'active',
-      is_whatsapp_verified: false,
-      is_approved: false, // New customers await admin approval.
+      is_whatsapp_verified: true,
+      is_approved: true, // Phone OTP verified users are approved
       is_active: true,
-      auth_provider: 'Email',
+      auth_provider: 'Phone',
       created_at: new Date().toISOString()
     };
 
@@ -176,7 +178,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
-        return { success: false, message: toFriendlyAuthError(error).message };
+        console.error('[Supabase Auth Error Detail]:', error);
+        const friendly = toFriendlyAuthError(error);
+        return {
+          success: false,
+          message: error.message ? `Auth Error: ${error.message}` : friendly.message
+        };
       }
 
       if (data.session) {
@@ -230,7 +237,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       fullName: data.full_name,
       email: data.email,
       phone: data.phone,
-      address: data.hostel_address,
+      address: data.hostel_address || 'Main Campus Hostel',
       password: data.password
     });
 
@@ -240,40 +247,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setLoading(true);
     try {
-      const {
-        data: { session: activeSession }
-      } = await supabase.auth.getSession();
-
-      if (!activeSession) {
-        return {
-          success: false,
-          message: 'Your verification session has expired. Please request a new code.'
-        };
-      }
-
-      const { error: updateError } = await supabase.auth.updateUser({
+      const { data: authData, error: signUpError } = await supabase.auth.signUp({
+        email: data.email.trim().toLowerCase(),
         password: data.password,
-        data: {
-          full_name: data.full_name.trim(),
-          phone: data.phone.trim(),
-          hostel_address: data.hostel_address.trim()
+        options: {
+          data: {
+            full_name: data.full_name.trim(),
+            phone: data.phone.trim(),
+            hostel_address: (data.hostel_address || '').trim()
+          }
         }
       });
 
-      if (updateError) {
-        return { success: false, message: toFriendlyAuthError(updateError).message };
+      if (signUpError) {
+        console.error('[Supabase Auth Error Detail]:', signUpError);
+        const friendly = toFriendlyAuthError(signUpError);
+        return {
+          success: false,
+          message: signUpError.message ? `Auth Error: ${signUpError.message}` : friendly.message
+        };
+      }
+
+      const newUserId = authData.user?.id || authData.session?.user?.id;
+      if (!newUserId) {
+        return { success: false, message: 'Failed to initialize user session.' };
       }
 
       const profile: UserProfile = {
-        id: activeSession.user.id,
+        id: newUserId,
         email: data.email.trim().toLowerCase(),
         full_name: data.full_name.trim(),
         phone: data.phone.trim(),
-        hostel_address: data.hostel_address.trim(),
+        hostel_address: (data.hostel_address || '').trim(),
         role: 'customer',
         account_status: 'active',
-        is_whatsapp_verified: false,
-        is_approved: false, // Admin approval still required before ordering.
+        is_whatsapp_verified: true,
+        is_approved: true,
         is_active: true,
         auth_provider: 'Email',
         created_at: new Date().toISOString()
@@ -285,11 +294,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setUser(profile);
-      setSession(activeSession);
+      if (authData.session) setSession(authData.session);
 
       return {
         success: true,
-        message: 'Account created! Your registration is sent for Admin approval before ordering.'
+        message: 'Account created successfully! Welcome to Trippy\'s Mehfill.'
       };
     } catch (e) {
       return { success: false, message: toFriendlyAuthError(e).message };
@@ -410,6 +419,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(roleUser);
   };
 
+  const resetPassword = async (emailInput: string): Promise<AuthResult> => {
+    if (!isSupabaseConfigured) {
+      return { success: false, message: NOT_CONFIGURED_MESSAGE };
+    }
+    const cleanEmail = emailInput.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, message: 'Please enter a valid email address.' };
+    }
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+      if (error) {
+        return { success: false, message: toFriendlyAuthError(error).message };
+      }
+      return {
+        success: true,
+        message: 'Password reset link sent! Check your email inbox.'
+      };
+    } catch (err) {
+      return { success: false, message: toFriendlyAuthError(err).message };
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -425,7 +457,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         updateProfile,
         switchDemoRole,
-        refreshProfile
+        refreshProfile,
+        resetPassword,
       }}
     >
       {children}
