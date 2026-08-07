@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { isTableNotProvisioned } from './optionalTable';
 import { GalleryItem } from '../../types';
 
 export const galleryService = {
@@ -9,6 +10,9 @@ export const galleryService = {
       .order('display_order', { ascending: true });
 
     if (error) {
+      // A table that was never provisioned is a dormant feature, not a
+      // failure. Without this every page load threw and logged an error.
+      if (isTableNotProvisioned(error)) return [];
       console.error('Error fetching gallery items:', error);
       throw error;
     }

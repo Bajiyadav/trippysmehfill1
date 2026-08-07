@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { isTableNotProvisioned } from './optionalTable';
 
 export interface AppNotification {
   id: string;
@@ -19,6 +20,9 @@ export const notificationsService = {
       .order('created_at', { ascending: false });
 
     if (error) {
+      // A table that was never provisioned is a dormant feature, not a
+      // failure. Without this every page load threw and logged an error.
+      if (isTableNotProvisioned(error)) return [];
       console.error('Error fetching notifications:', error);
       throw error;
     }

@@ -831,17 +831,17 @@ function MainApp() {
             <p className="text-xs font-black text-white uppercase tracking-wider font-serif">Quick Links</p>
             <ul className="space-y-1.5 text-xs text-gray-300">
               <li>
-                <button onClick={() => { setActiveSection('menu'); setTimeout(() => document.getElementById('gallery-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} className="hover:text-[#C5A059] transition">
+                <button onClick={() => { setActiveSection('menu'); setTimeout(() => document.getElementById('gallery-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} className="hover:text-[#C5A059] transition min-h-[44px] flex items-center">
                   Gallery
                 </button>
               </li>
               <li>
-                <button onClick={() => { setActiveSection('menu'); setTimeout(() => document.getElementById('offers-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} className="hover:text-[#C5A059] transition">
+                <button onClick={() => { setActiveSection('menu'); setTimeout(() => document.getElementById('offers-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} className="hover:text-[#C5A059] transition min-h-[44px] flex items-center">
                   Offers
                 </button>
               </li>
               <li>
-                <button onClick={() => { setActiveSection('menu'); setTimeout(() => document.getElementById('menu-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} className="hover:text-[#C5A059] transition">
+                <button onClick={() => { setActiveSection('menu'); setTimeout(() => document.getElementById('menu-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} className="hover:text-[#C5A059] transition min-h-[44px] flex items-center">
                   Menu
                 </button>
               </li>

@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx --test *.test.ts"
+    "test": "tsx --test *.test.ts",
+    "e2e": "node e2e/smoke.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -31,6 +33,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "autoprefixer": "^10.4.21",
+    "playwright": "^1.62.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
