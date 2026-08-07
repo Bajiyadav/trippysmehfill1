@@ -165,6 +165,10 @@ export function useAntiFraudRegistration() {
         .select()
         .single();
 
+      // Until the email code is confirmed there is no session, so this write is
+      // refused by row-level security. That is not a registration failure: the
+      // signup trigger has already created the row from the metadata above, and
+      // the profile is re-synced once the session exists.
       if (profileError) {
         console.warn('[Anti-Fraud Reg] Profile upsert notice:', profileError.message);
         setLoading(false);
