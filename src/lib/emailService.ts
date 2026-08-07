@@ -152,14 +152,12 @@ export async function sendPasswordResetOTP(email: string): Promise<SendOtpResult
   }
 
   try {
-    // Check if profile exists first to prevent 500 auth errors on non-existent accounts
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('email')
-      .ilike('email', cleanEmail)
-      .maybeSingle();
+    // Check the account exists first to prevent 500 auth errors on non-existent
+    // addresses. `profiles` is not readable before sign-in, so this goes through
+    // a SECURITY DEFINER function that answers with a boolean only.
+    const { data: exists } = await supabase.rpc('email_exists', { p_email: cleanEmail });
 
-    if (!profile) {
+    if (!exists) {
       return {
         success: false,
         message: `No account found for "${cleanEmail}". Please click "Create Account" to register.`

@@ -10,6 +10,8 @@ and safe to re-run on the existing project.
 | `migrations/0001_core_schema.sql` | Creates `profiles`, `orders`, `menu_items`, `kitchen_settings`, `feedback`, `inventory` and every column the client writes |
 | `migrations/0002_rls_policies.sql` | Enables Row Level Security and creates the policies + role helper functions |
 | `migrations/0003_auth_triggers.sql` | Signup → profile trigger, `updated_at` triggers, admin bootstrap |
+| `migrations/0004_anon_lookup_rpcs.sql` | `email_exists()` / `lookup_login_email()` — the two lookups sign-in needs before a session exists |
+| `migrations/0005_signup_trigger_telemetry.sql` | Signup trigger also persists the anti-fraud GPS/IP/device metadata |
 
 These replace the old top-level `schema.sql`, which could not run on a fresh
 project (it did `ALTER TABLE public.orders` without ever creating `orders`).
@@ -47,6 +49,26 @@ Then **Authentication → Rate Limits**: enabling custom SMTP caps email at
 
 Brevo free tier is 300 emails/day.
 
+### Brevo IP blocking
+
+Brevo can refuse SMTP connections from IP addresses that are not on its
+authorized list (`525 5.7.1 Unauthorized IP address`), and the feature is on by
+default for accounts created after May 2024. Supabase's outbound mail IPs are
+not published and not stable, so an allowlist cannot work: **Brevo → Settings →
+Security → Authorized IPs → SMTP keys → Deactivate**. While that is active every
+OTP fails as `500 Error sending magic link email`.
+
+### Email templates carry the code, not a link
+
+Supabase's default confirmation/magic-link/recovery templates contain
+`{{ .ConfirmationURL }}` only. The app calls `verifyOtp({ token })` with a typed
+code, so the templates must render `{{ .Token }}` — they are set to a branded
+6-digit layout under **Authentication → Emails → Templates**.
+
+Template and subject edits do not reach the running Auth service until the
+project is restarted (Project Settings → General → Restart project); until then
+the old default email keeps going out.
+
 ### Sender address
 
 Add the sender under Brevo → **Senders, Domains & Dedicated IPs → Senders** and
@@ -62,7 +84,9 @@ authenticating your own domain in Brevo is the durable fix — free sender domai
 
 ### Other required Auth settings
 
-- **Authentication → Providers → Email**: Email enabled, *Confirm email* on.
+- **Authentication → Providers → Email**: Email enabled (`external_email_enabled`),
+  *Confirm email* on (`mailer_autoconfirm` **off** — with it on no code is ever
+  sent), OTP length `6`, OTP expiry `600`s.
 - **Authentication → URL Configuration**: Site URL set to the production domain,
   with the Vercel/Netlify preview domains listed as redirect URLs.
 

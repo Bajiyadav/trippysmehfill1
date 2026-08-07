@@ -67,10 +67,32 @@ export function useAntiFraudRegistration() {
         email: cleanEmail,
         password,
         options: {
+          // The anti-fraud telemetry travels as auth metadata because the
+          // profile row is written by the `on_auth_user_created` trigger, which
+          // runs before this browser has a session and therefore before it may
+          // write to `profiles` itself.
           data: {
             full_name: fullName.trim(),
             phone: phone.trim(),
-            hostel_address: hostelAddress.trim()
+            hostel_address: hostelAddress.trim(),
+            auth_provider: 'Email',
+            ip_address: sec.ipAddress,
+            latitude: sec.latitude,
+            longitude: sec.longitude,
+            gps_accuracy: sec.accuracyMeters,
+            gps_allowed: sec.gpsAllowed,
+            city: sec.city,
+            state: sec.state,
+            country: sec.country,
+            pin_code: sec.pinCode,
+            distance_km: sec.distanceKm,
+            device_type: sec.deviceType,
+            os_name: sec.osName,
+            browser_name: sec.browserName,
+            timezone: sec.timezone,
+            google_maps_url: sec.googleMapsUrl,
+            fraud_risk_level: sec.fraudRiskLevel,
+            fraud_risk_reasons: sec.fraudRiskReasons
           }
         }
       });
@@ -132,11 +154,14 @@ export function useAntiFraudRegistration() {
         .select()
         .single();
 
+      // Until the email code is confirmed there is no session, so this write is
+      // refused by row-level security. That is not a registration failure: the
+      // signup trigger has already created the row from the metadata above, and
+      // the profile is re-synced once the session exists.
       if (profileError) {
-        console.error('[Anti-Fraud Reg] Profile upsert error:', profileError.message);
-        setError(profileError.message);
+        console.warn('[Anti-Fraud Reg] Profile upsert deferred to signup trigger:', profileError.message);
         setLoading(false);
-        return { success: false, error: profileError.message, user: profilePayload };
+        return { success: true, user: profilePayload };
       }
 
       const finalProfile = (upsertData as UserProfile) || profilePayload;
