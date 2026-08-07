@@ -176,14 +176,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       // If identifier is not an email (e.g. phone number or username), find email from profiles
       if (!email.includes('@')) {
-        const { data: foundProfile } = await supabase
-          .from('profiles')
-          .select('email')
-          .or(`phone.eq.${identifier.trim()},username.eq.${identifier.trim().toLowerCase()}`)
-          .maybeSingle();
+        // `profiles` is unreadable until a session exists, so the phone/username
+        // to email resolution goes through a SECURITY DEFINER function.
+        const { data: foundEmail } = await supabase.rpc('lookup_login_email', {
+          p_identifier: identifier.trim()
+        });
 
-        if (foundProfile && foundProfile.email) {
-          email = foundProfile.email.toLowerCase();
+        if (typeof foundEmail === 'string' && foundEmail) {
+          email = foundEmail.toLowerCase();
         } else {
           return {
             success: false,
