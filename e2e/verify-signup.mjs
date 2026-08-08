@@ -32,12 +32,24 @@ const codes = [];
 for (let i = 1; i <= 10; i++) {
   const email = `qa.sf.${RUN}.${i}@mailinator.com`;
   const password = `Qa!${RUN}sf${i}`;
+  // DISTINCT phone per account AND per run.
+  //
+  // profiles.phone carries a UNIQUE constraint (profiles_phone_key) that is
+  // global, not per-run. The original version sent 9000000001 for all ten
+  // accounts, so nine collided regardless of what the trigger did -- the test
+  // was measuring its own flaw. A fixed per-account series fixes that but only
+  // survives one run, because run two re-claims run one's numbers.
+  //
+  // Seeding from RUN keeps the 10-digit shape and makes the script repeatable.
+  const phone = `9${String(RUN).slice(-5)}${String(10000 + i).slice(-4)}`;
   const su = await call('/auth/v1/signup', { method:'POST',
-    body:{ email, password, data:{ full_name:'QA cust', phone:'9000000001' } } });
+    body:{ email, password, data:{ full_name:'QA cust', phone } } });
   const uid = su.body?.user?.id || su.body?.id;
 
   if (su.status !== 200 || !uid) {
-    console.log(`  ${String(i).padStart(2)}. FAIL signup HTTP ${su.status} :: ${(su.body?.msg||su.body?.error_description||'').slice(0,70)}`);
+    // A LOUD failure here is the desired post-fix behaviour: it means the
+    // trigger no longer swallows the error.
+    console.log(`  ${String(i).padStart(2)}. signup HTTP ${su.status} :: ${(su.body?.msg||su.body?.error_description||JSON.stringify(su.body)||'').slice(0,90)}`);
     continue;
   }
   made.push({ i, uid, email });
@@ -50,7 +62,15 @@ for (let i = 1; i <= 10; i++) {
   const p = rows[0];
   const pass = rows.length === 1 && p?.id === uid && p?.role === 'customer' && !!p?.referral_code;
   if (pass) { ok++; codes.push(p.referral_code); }
-  console.log(`  ${String(i).padStart(2)}. ${pass?'PASS':'FAIL'}  rows=${rows.length} role=${p?.role??'-'} code=${p?.referral_code??'-'}`);
+  let why = '';
+  if (!pass) {
+    // Reproduce the trigger's insert to capture the error it is hiding.
+    const probe = await call('/rest/v1/profiles', { method:'POST', token:tk, prefer:'return=representation',
+      body:{ id:uid, email, full_name:'QA cust', phone, role:'customer',
+             account_status:'active', is_approved:false, is_active:true } });
+    why = ` :: probe HTTP ${probe.status} ${probe.body?.code ?? ''} ${(probe.body?.message ?? '').slice(0,70)}`;
+  }
+  console.log(`  ${String(i).padStart(2)}. ${pass?'PASS':'FAIL'}  rows=${rows.length} role=${p?.role??'-'} code=${p?.referral_code??'-'}${why}`);
 }
 
 console.log(`\n  RESULT: ${ok}/10 signups produced exactly one profile`);
@@ -65,7 +85,7 @@ if (a) {
   const tk = (await call('/auth/v1/token?grant_type=password', { method:'POST', body:{ email:a.email, password:pw } })).body?.access_token;
   const ord = await call('/rest/v1/orders', { method:'POST', token:tk, prefer:'return=representation',
     body:{ order_number:`#QA-SF-${RUN}`, customer_id:a.uid, customer_name:'QA cust',
-           customer_phone:'9000000001', delivery_address:'QA Address',
+           customer_phone:`9${String(RUN).slice(-5)}0001`, delivery_address:'QA Address',
            items:[{dish_id:'q1',dish_name:'QA Dish',quantity:1,price:100}],
            subtotal:100, tax_amount:0, delivery_fee:0, total_amount:100,
            payment_method:'UPI', payment_status:'pending', status:'pending',
