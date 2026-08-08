@@ -25,7 +25,12 @@ export const settingsService = {
         delivery_charge: 30,
         tax_percent: 0,
         estimated_delivery_mins: 30,
-        restaurant_upi_id: "7671018757@ybl",
+          // Deliberately EMPTY. This fallback is used when the settings row
+          // cannot be read, and a hardcoded VPA here would silently route real
+          // customer payments to whatever account was last committed -- which
+          // was 7671018757@ybl while the live restaurant uses 7671018717-2@ybl.
+          // A missing UPI ID disables UPI at checkout; it must never guess.
+          restaurant_upi_id: "",
         whatsapp_number: "8569955029",
         closed_banner_message: "RESTAURANT IS CURRENTLY CLOSED (Opening Hours: 9:00 AM to 10:00 PM) - you can still browse the menu.",
         lat: 17.4483,

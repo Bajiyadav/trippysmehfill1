@@ -10,7 +10,10 @@ export const initialKitchenSettings: KitchenSettings = {
   delivery_charge: 30,
   tax_percent: 0,
   estimated_delivery_mins: 30,
-  restaurant_upi_id: "7671018757@ybl",
+  // Empty on purpose -- see services/supabase/settings.ts. Never ship a
+  // payment destination as a default; an unconfigured kitchen must show no QR
+  // rather than a QR pointing at someone else's account.
+  restaurant_upi_id: "",
   whatsapp_number: "8569955929",
   closed_banner_message: "RESTAURANT IS CURRENTLY CLOSED (Opening Hours: 9:00 AM to 10:00 PM) - you can still browse the menu.",
   lat: 17.4483,

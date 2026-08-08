@@ -110,6 +110,10 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
 
   const payableTotal = placedOrder?.total_amount ?? grandTotal;
 
+  // A UPI ID must come from Settings. Empty means unconfigured, and UPI is then
+  // not offered at all rather than pointed at a guess.
+  const upiConfigured = Boolean(settings.restaurant_upi_id?.trim());
+
   const upiUri = buildUpiPaymentUri({
     upiId: settings.restaurant_upi_id,
     payeeName: settings.kitchen_name,
@@ -754,7 +758,13 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                   </div>
                 </button>
 
-                {/* ② Instant UPI Payment */}
+                {/* ② Instant UPI Payment.
+                    Offered only when the kitchen has actually configured a UPI
+                    ID in Settings. Without one there is no honest destination,
+                    and the previous behaviour was worse than hiding it: a
+                    hardcoded fallback VPA meant a customer could pay a
+                    different account than the restaurant's. COD stays. */}
+                {upiConfigured ? (
                 <button
                   type="button"
                   role="radio"
@@ -791,6 +801,12 @@ export const CheckoutView: React.FC<CheckoutViewProps> = ({
                     {paymentMethod === 'UPI' && <CheckCircle2 className="w-5 h-5 text-[#C5A059] shrink-0" />}
                   </div>
                 </button>
+                ) : (
+                  <p className="p-4 rounded-2xl border border-white/10 bg-[#181818] text-[11px] text-gray-400 leading-relaxed">
+                    Online UPI payment is unavailable right now — the kitchen has not
+                    configured a UPI ID. Cash on Delivery is still available.
+                  </p>
+                )}
               </div>
 
               {paymentMethod === 'UPI' && (
