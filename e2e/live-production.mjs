@@ -39,7 +39,13 @@ const api = async (path, { method = 'GET', token = KEY, body, prefer } = {}) => 
 async function makeAccount(label, role) {
   const email = `qa.${label}.${RUN}@mailinator.com`;
   const password = `Qa!${RUN}${label}`;
-  const su = await api('/auth/v1/signup', { method: 'POST', body: { email, password, data: { full_name: `QA ${label}`, phone: '9000000001' } } });
+  // profiles.phone is globally UNIQUE (profiles_phone_key). A hardcoded number
+  // works exactly once and then fails forever -- and because the signup trigger
+  // no longer swallows errors, the collision surfaces as HTTP 500 from GoTrue
+  // rather than a silent no-op. Seeding from RUN keeps the 10-digit shape and
+  // makes the harness repeatable; the label suffix separates accounts within a run.
+  const phone = `9${String(RUN).slice(-5)}${label === 'cust' ? '0001' : label === 'admin' ? '0002' : '0003'}`;
+  const su = await api('/auth/v1/signup', { method: 'POST', body: { email, password, data: { full_name: `QA ${label}`, phone } } });
   const uid = su.body?.user?.id || su.body?.id;
   if (uid) created.users.push({ label, uid, email });
 
@@ -48,7 +54,8 @@ async function makeAccount(label, role) {
     const si = await api('/auth/v1/token?grant_type=password', { method: 'POST', body: { email, password } });
     token = si.body?.access_token;
   }
-  return { email, uid, token, role, signupStatus: su.status };
+  return { email, uid, token, role, phone, signupStatus: su.status,
+           signupError: (su.body?.msg || su.body?.error_description || su.body?.error || '') };
 }
 
 console.log(`\n=== LIVE PRODUCTION TEST — run ${RUN} ===\n`);
@@ -56,7 +63,8 @@ console.log(`\n=== LIVE PRODUCTION TEST — run ${RUN} ===\n`);
 // ---- 1/2. Customer account + authenticated session -------------------------
 const cust = await makeAccount('cust', 'customer');
 rec('1. Signup (disposable customer)', cust.signupStatus === 200 ? 'PASS' : 'FAIL',
-    `POST /auth/v1/signup -> HTTP ${cust.signupStatus}, uid ${cust.uid ? 'created' : 'MISSING'}`);
+    `POST /auth/v1/signup -> HTTP ${cust.signupStatus}, uid ${cust.uid ? 'created' : 'MISSING'}` +
+    (cust.signupStatus === 200 ? '' : ` :: ${String(cust.signupError).slice(0, 90)}`));
 
 if (!cust.token) {
   rec('2. Authenticated session', 'BLOCKED',
@@ -74,7 +82,7 @@ rec('2b. Trigger created profiles row', Array.isArray(prof.body) && prof.body.le
 // ---- 3. COD order ----------------------------------------------------------
 const mkOrder = (method, num) => ({
   order_number: num, customer_id: cust.uid, customer_name: 'QA Customer',
-  customer_phone: '9000000001', delivery_address: 'QA Test Address',
+  customer_phone: cust.phone, delivery_address: 'QA Test Address',
   items: [{ dish_id: 'qa1', dish_name: 'QA Biryani', quantity: 1, price: 240 }],
   subtotal: 240, tax_amount: 0, delivery_fee: 0, total_amount: 240,
   payment_method: method, payment_status: 'pending', status: 'pending',
@@ -104,10 +112,37 @@ rec('4b. UTR stored as a CLAIM, not a settlement', utr.status === 200 && utr.bod
 // Customer must NOT be able to self-verify.
 const selfVerify = await api(`/rest/v1/orders?id=eq.${upiId}`, { method: 'PATCH', token: cust.token,
   body: { payment_status: 'completed' }, prefer: 'return=representation' });
-const stillPending = await api(`/rest/v1/orders?select=payment_status&id=eq.${upiId}`, { token: cust.token });
+
+// Read back through a FRESH session, not the write's own response. A write can
+// report success while the row is unchanged, and vice versa -- only an
+// independent read proves what was persisted.
+const fresh = await api('/auth/v1/token?grant_type=password', { method: 'POST',
+  body: { email: cust.email, password: `Qa!${RUN}cust` } });
+const freshToken = fresh.body?.access_token || cust.token;
+const readBack = await api(`/rest/v1/orders?select=payment_status&id=eq.${upiId}`, { token: freshToken });
+const persisted = readBack.body?.[0]?.payment_status;
+
 rec('4c. Customer CANNOT self-verify payment',
-    stillPending.body?.[0]?.payment_status === 'pending' ? 'PASS' : 'FAIL',
-    `PATCH completed -> HTTP ${selfVerify.status}; DB still reads payment_status=${stillPending.body?.[0]?.payment_status}`);
+    persisted === 'pending' ? 'PASS' : 'FAIL',
+    `PATCH completed -> HTTP ${selfVerify.status} ` +
+    `code=${selfVerify.body?.code ?? 'none'} msg="${(selfVerify.body?.message ?? 'none').slice(0,80)}" | ` +
+    `fresh-session read: payment_status=${persisted}`);
+
+// Audit columns must also be unforgeable.
+const forge = await api(`/rest/v1/orders?id=eq.${upiId}`, { method: 'PATCH', token: freshToken,
+  body: { payment_verified_by: cust.uid, payment_verified_at: new Date().toISOString() } });
+const auditRead = await api(`/rest/v1/orders?select=payment_verified_by,payment_verified_at&id=eq.${upiId}`, { token: freshToken });
+rec('4d. Customer CANNOT forge the audit trail',
+    !auditRead.body?.[0]?.payment_verified_by ? 'PASS' : 'FAIL',
+    `PATCH audit -> HTTP ${forge.status} code=${forge.body?.code ?? 'none'} | ` +
+    `persisted payment_verified_by=${auditRead.body?.[0]?.payment_verified_by ?? 'null'}`);
+
+// A customer must still be able to cancel and to record a UTR.
+const cancel = await api(`/rest/v1/orders?id=eq.${codId}`, { method: 'PATCH', token: freshToken,
+  body: { status: 'cancelled' }, prefer: 'return=representation' });
+rec('4e. Customer CAN still cancel (trigger not over-blocking)',
+    cancel.status === 200 && cancel.body?.[0]?.status === 'cancelled' ? 'PASS' : 'FAIL',
+    `PATCH status=cancelled -> HTTP ${cancel.status}, persisted status=${cancel.body?.[0]?.status ?? '?'}`);
 
 console.log('\n--- ADMIN / KITCHEN / DRIVER steps need role grants ---');
 console.log('  Promote these uids in SQL, then re-run with STAGE=2:');
