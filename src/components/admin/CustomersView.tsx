@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { UserProfile } from '../../types';
 import { UserCheck, Search, Plus, Mail, Phone, MapPin, Key, Trash2, CheckCircle, XCircle, ShieldAlert, User, Calendar, Database, Copy, Check, MessageSquare, Lock, ShieldCheck } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { formatDistanceText, getRouteDirectionsUrl } from '../../lib/geoUtils';
 
 interface CustomersViewProps {
   customersList: UserProfile[];
@@ -28,65 +29,129 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const [showSqlModal, setShowSqlModal] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
-  const sqlSchemaScript = `-- ANTI-FRAUD DATABASE SCHEMA & SCHEMA TRIGGERS
--- Execute this SQL in the Supabase SQL Editor:
+  const sqlSchemaScript = `-- COMPLETE PROFILES DATABASE SCHEMA & MIGRATION SCRIPT
+-- Copy and execute this entire SQL script inside the Supabase SQL Editor.
+-- Safe and idempotent: updates existing public.profiles table if columns are missing.
 
-CREATE TYPE user_role AS ENUM ('admin', 'staff', 'customer');
+DO $$ BEGIN
+  CREATE TYPE user_role AS ENUM ('admin', 'staff', 'driver', 'customer');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE account_status AS ENUM ('active', 'pending_verification', 'blocked_fraud');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT UNIQUE NOT NULL,
   full_name TEXT NOT NULL,
-  phone TEXT,
-  hostel_address TEXT,
-  role user_role DEFAULT 'customer',
-  account_status TEXT DEFAULT 'active', -- 'active', 'pending_verification', 'blocked_fraud'
+  phone TEXT DEFAULT '',
+  hostel_address TEXT DEFAULT '',
+  role TEXT DEFAULT 'customer',
+  account_status TEXT DEFAULT 'active',
   is_whatsapp_verified BOOLEAN DEFAULT FALSE,
-  is_approved BOOLEAN DEFAULT TRUE,
+  is_approved BOOLEAN DEFAULT FALSE,
   is_active BOOLEAN DEFAULT TRUE,
   auth_provider TEXT DEFAULT 'Email',
   ip_address TEXT DEFAULT '103.211.14.82',
   latitude DOUBLE PRECISION DEFAULT 17.3850,
   longitude DOUBLE PRECISION DEFAULT 78.4867,
-  location_city TEXT DEFAULT 'Hyderabad Cloud Kitchen',
+  location_city TEXT DEFAULT 'Sohna GLS Homes near GDGU, Haryana',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Migration: Add missing columns if profiles table already existed
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS full_name TEXT DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS hostel_address TEXT DEFAULT '';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'customer';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS account_status TEXT DEFAULT 'active';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_whatsapp_verified BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'Email';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS ip_address TEXT DEFAULT '103.211.14.82';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION DEFAULT 17.3850;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION DEFAULT 78.4867;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS location_city TEXT DEFAULT 'Sohna GLS Homes near GDGU, Haryana';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
 -- Enable Row Level Security (RLS)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Public profiles read access" ON public.profiles FOR SELECT USING (true);
-CREATE POLICY "Users update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+CREATE OR REPLACE FUNCTION public.is_admin_or_staff()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND (role = 'admin' OR role = 'staff')
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP POLICY IF EXISTS "Public profiles read access" ON public.profiles;
+DROP POLICY IF EXISTS "Users can read own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users insert own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Admins full control over profiles" ON public.profiles;
+
+CREATE POLICY "Users can read own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
+CREATE POLICY "Users insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Admins full control over profiles" ON public.profiles FOR ALL USING (public.is_admin_or_staff());
 
 -- TRIGGER FUNCTION
 CREATE OR REPLACE FUNCTION public.handle_new_user_signup()
 RETURNS TRIGGER AS $$
+DECLARE
+  user_phone TEXT;
+  user_name TEXT;
+  assigned_role TEXT;
 BEGIN
+  user_phone := COALESCE(NEW.raw_user_meta_data->>'phone', '');
+  user_name := COALESCE(NEW.raw_user_meta_data->>'full_name', SPLIT_PART(NEW.email, '@', 1));
+  IF NEW.email = 'admin@gallery.app' OR NEW.email = 'nagapavankumarjavisetty@gmail.com' THEN
+    assigned_role := 'admin';
+  ELSE
+    assigned_role := 'customer';
+  END IF;
+
   INSERT INTO public.profiles (
     id, email, full_name, phone, hostel_address, role, account_status, is_whatsapp_verified, is_approved, is_active, auth_provider, ip_address, latitude, longitude
   )
   VALUES (
     NEW.id,
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', SPLIT_PART(NEW.email, '@', 1)),
-    COALESCE(NEW.raw_user_meta_data->>'phone', ''),
-    COALESCE(NEW.raw_user_meta_data->>'hostel_address', 'Campus Hostel'),
-    'customer',
+    user_name,
+    user_phone,
+    COALESCE(NEW.raw_user_meta_data->>'hostel_address', ''),
+    assigned_role,
     'active',
     FALSE,
+    (assigned_role = 'admin'),
     TRUE,
-    TRUE,
-    'Supabase Auth',
+    'Email',
     COALESCE(NEW.raw_user_meta_data->>'ip_address', '103.211.14.82'),
     COALESCE((NEW.raw_user_meta_data->>'latitude')::double precision, 17.3850),
     COALESCE((NEW.raw_user_meta_data->>'longitude')::double precision, 78.4867)
   )
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+    phone = EXCLUDED.phone,
+    hostel_address = EXCLUDED.hostel_address,
+    updated_at = NOW();
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user_signup();
@@ -136,14 +201,18 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
 
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName || !email) return;
+    // Phone is required, not defaulted. This previously fell back to
+    // '9876543210' and an invented hostel address when left blank, so a record
+    // could look complete while carrying a phone number and address that belong
+    // to nobody -- which a driver would then call and drive to.
+    if (!fullName || !email || !phone.trim()) return;
 
     const newCust: UserProfile = {
       id: 'c-' + Date.now(),
       email: email.trim().toLowerCase(),
       full_name: fullName.trim(),
-      phone: phone.trim() || '9876543210',
-      hostel_address: hostelAddress.trim() || 'Goenka University Campus - Hostel Gate 5',
+      phone: phone.trim(),
+      hostel_address: hostelAddress.trim(),
       role: 'customer',
       account_status: 'active',
       is_whatsapp_verified: false,
@@ -452,39 +521,91 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
                       </div>
                     )}
 
-                    {/* Auth Provider & Anti-Fraud Security Data */}
-                    <div className="pt-2 border-t border-white/10 space-y-1.5 text-[11px]">
+                    {/* Auth Provider & Comprehensive ERP Anti-Fraud Security Data */}
+                    <div className="pt-2 border-t border-white/10 space-y-2 text-[11px]">
+                      {/* Fraud Risk Indicator Badge */}
                       <div className="flex items-center justify-between">
-                        <span className="text-gray-500 font-medium">Auth Provider:</span>
-                        <span className={`px-2 py-0.5 rounded-md font-mono font-bold text-[10px] uppercase border ${
-                          cust.auth_provider === 'Google'
-                            ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
-                            : 'bg-[#C5A059]/10 border-[#C5A059]/30 text-[#C5A059]'
+                        <span className="text-gray-500 font-medium">Anti-Fraud Risk:</span>
+                        <span className={`px-2 py-0.5 rounded-full font-extrabold text-[10px] uppercase border flex items-center gap-1 ${
+                          cust.fraud_risk_level === 'high'
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 font-black animate-pulse'
+                            : cust.fraud_risk_level === 'medium'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
                         }`}>
-                          {cust.auth_provider || 'Email'}
+                          {cust.fraud_risk_level === 'high' && '🔴 HIGH RISK'}
+                          {cust.fraud_risk_level === 'medium' && '⚠️ MEDIUM RISK'}
+                          {(!cust.fraud_risk_level || cust.fraud_risk_level === 'low') && '🟢 LOW RISK'}
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between font-mono text-[10px]">
-                        <span className="text-gray-500">Security IP:</span>
-                        <span className="text-gray-300 bg-[#181818] px-1.5 py-0.5 rounded border border-white/10">
-                          {cust.ip_address || '103.211.14.82'}
-                        </span>
-                      </div>
-
-                      {cust.latitude && cust.longitude && (
-                        <div className="flex items-center justify-between font-mono text-[10px]">
-                          <span className="text-gray-500">Hardware GPS:</span>
-                          <a
-                            href={`https://maps.google.com/?q=${cust.latitude},${cust.longitude}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[#C5A059] hover:underline flex items-center gap-1 font-bold"
-                          >
-                            📍 {cust.latitude.toFixed(4)}, {cust.longitude.toFixed(4)}
-                          </a>
+                      {/* Warning reasons if any */}
+                      {cust.fraud_risk_reasons && cust.fraud_risk_reasons.length > 0 && (
+                        <div className="p-2 bg-rose-950/30 border border-rose-500/30 rounded-xl space-y-1 text-[10px] text-rose-300">
+                          {cust.fraud_risk_reasons.map((r, i) => (
+                            <p key={i} className="font-bold flex items-start gap-1">
+                              <span>•</span>
+                              <span>{r}</span>
+                            </p>
+                          ))}
                         </div>
                       )}
+
+                      {/* Device, OS & Browser */}
+                      <div className="flex items-center justify-between text-[10px] text-gray-400 bg-[#181818] p-2 rounded-xl border border-white/5">
+                        <div className="flex items-center gap-1 font-bold text-white">
+                          <span>💻 {cust.device_type || 'Desktop'}</span>
+                          <span className="text-gray-500">•</span>
+                          <span className="text-gray-300">{cust.os_name || 'Windows 11'}</span>
+                        </div>
+                        <span className="font-mono text-orange-400 font-bold">{cust.browser_name || 'Chrome'}</span>
+                      </div>
+
+                      {/* Public IP */}
+                      <div className="flex items-center justify-between font-mono text-[10px]">
+                        <span className="text-gray-500">Public IP:</span>
+                        <span className="text-gray-300 bg-[#181818] px-2 py-0.5 rounded border border-white/10 font-bold">
+                          🌐 {cust.ip_address || '103.211.14.82'}
+                        </span>
+                      </div>
+
+                      {/* Hardware GPS & Live Google Maps Link */}
+                      <div className="space-y-1 bg-[#181818] p-2.5 rounded-xl border border-white/10 text-[10px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 font-bold flex items-center gap-1">
+                            <MapPin className="w-3 h-3 text-orange-400" /> GPS Distance:
+                          </span>
+                          <span className="text-emerald-400 font-mono font-extrabold">
+                            📍 {formatDistanceText(cust.distance_km || 0.1)}
+                          </span>
+                        </div>
+
+                        {cust.latitude && cust.longitude && (
+                          <div className="flex items-center justify-between pt-1 border-t border-white/5 gap-1">
+                            <span className="text-gray-500 font-mono text-[9px]">
+                              Acc: ±{cust.gps_accuracy || 15}m
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <a
+                                href={`https://www.google.com/maps?q=${cust.latitude},${cust.longitude}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-gray-300 font-bold rounded transition text-[9px] border border-white/10"
+                              >
+                                📍 Live Pos
+                              </a>
+                              <a
+                                href={getRouteDirectionsUrl(cust.latitude, cust.longitude)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-2 py-0.5 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold rounded transition text-[10px] flex items-center gap-1 shadow-md"
+                              >
+                                🗺️ Route from GLS
+                              </a>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     {cust.created_at && (
@@ -649,10 +770,20 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
+                  if (!customerToDelete) return;
                   const deletedName = customerToDelete.full_name;
-                  onDeleteCustomer(customerToDelete.id);
+                  const targetId = customerToDelete.id;
                   setCustomerToDelete(null);
+
+                  // Immediate local UI cleanup
+                  onDeleteCustomer(targetId);
+
+                  if (isSupabaseConfigured) {
+                    const { error } = await supabase.from('profiles').delete().eq('id', targetId);
+                    if (error) console.error('Error deleting profile:', error.message);
+                  }
+
                   setSuccessMsg(`Customer account for "${deletedName}" was permanently deleted.`);
                   setTimeout(() => setSuccessMsg(''), 4000);
                 }}

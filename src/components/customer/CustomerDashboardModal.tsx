@@ -305,12 +305,12 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
             <nav className="space-y-1">
               {[
                 { id: 'overview', label: 'Dashboard Overview', icon: Sparkles },
-                { id: 'orders', label: 'Order History (Swiggy Style)', icon: ShoppingBag, badge: customerOrders.length },
+                { id: 'orders', label: 'Order History', icon: ShoppingBag, badge: customerOrders.length },
                 { id: 'live_tracking', label: 'Live Order Tracker', icon: Truck, activePulse: Boolean(activeOrder) },
-                { id: 'wallet_rewards', label: 'Wallet & Loyalty', icon: Wallet, val: '₹250' },
+                { id: 'wallet_rewards', label: 'Wallet & Loyalty', icon: Wallet, val: `₹${user.wallet_balance || 0}` },
                 { id: 'coupons', label: 'Coupons & Discounts', icon: Gift },
                 { id: 'addresses', label: 'Delivery Location', icon: MapPin },
-                { id: 'referral', label: 'Refer & Earn (₹100)', icon: Share2 },
+                { id: 'referral', label: 'Refer & Get 25% OFF', icon: Share2 },
                 { id: 'profile', label: 'Profile & Security', icon: User, badgeText: 'Password' }
               ].map((tab) => {
                 const Icon = tab.icon;
@@ -395,7 +395,7 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
               </h2>
               <p className="text-xs text-gray-400">
                 {activeTab === 'orders'
-                  ? 'Swiggy/Zomato style order tracking, repeat order & tax receipts.'
+                  ? 'Track your orders, view tax receipts & repeat past orders.'
                   : activeTab === 'profile'
                   ? 'View login password, update password & manage personal details.'
                   : 'Manage your orders, rewards, addresses & account security.'}
@@ -485,7 +485,7 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
 
                 <div className="bg-[#181818] rounded-2xl p-4 border border-white/10 space-y-1">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Wallet Balance</p>
-                  <p className="text-2xl font-black text-[#C5A059]">₹250</p>
+                  <p className="text-2xl font-black text-[#C5A059]">₹{user.wallet_balance || 0}</p>
                 </div>
 
                 <div className="bg-[#181818] rounded-2xl p-4 border border-white/10 space-y-1 col-span-2 sm:col-span-1">
@@ -584,7 +584,7 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
                       key={ord.id}
                       className="bg-[#181818] rounded-3xl border border-white/10 overflow-hidden shadow-lg hover:border-[#C5A059]/40 transition space-y-0"
                     >
-                      {/* Swiggy Style Card Header */}
+                      {/* Order Card Header */}
                       <div className="p-4 sm:p-5 bg-black/40 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-2xl bg-orange-600/20 text-orange-400 border border-orange-500/30 flex items-center justify-center shrink-0">
@@ -610,7 +610,7 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Swiggy Style Itemized Body */}
+                      {/* Order Itemized Body */}
                       <div className="p-4 sm:p-5 space-y-3">
                         
                         {/* Dishes list */}
@@ -655,7 +655,7 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
                           </div>
                         </div>
 
-                        {/* SWIGGY / ZOMATO ACTION BUTTONS */}
+                        {/* ORDER ACTION BUTTONS */}
                         <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-white/10">
                           <div className="flex items-center gap-2">
                             
@@ -768,7 +768,7 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="text-[10px] font-black uppercase tracking-widest text-[#C5A059]">Trippy's Cash Wallet</span>
-                    <h3 className="text-3xl font-black text-white font-mono mt-1">₹250.00</h3>
+                    <h3 className="text-3xl font-black text-white font-mono mt-1">₹{(user.wallet_balance || 0).toFixed(2)}</h3>
                   </div>
                   <div className="p-3 rounded-2xl bg-[#C5A059]/10 text-[#C5A059]">
                     <Wallet className="w-8 h-8" />
@@ -844,20 +844,25 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
               <div className="w-14 h-14 rounded-full bg-[#C5A059]/10 border border-[#C5A059]/30 text-[#C5A059] flex items-center justify-center mx-auto">
                 <Share2 className="w-7 h-7" />
               </div>
-              <div>
-                <h3 className="text-xl font-black text-white font-serif">Refer Friends & Earn ₹100</h3>
-                <p className="text-xs text-gray-400 max-w-md mx-auto mt-1">
-                  Share your unique code with campus hostel mates. When they place their 1st order, you both get ₹100 cash in your wallet!
-                </p>
+              <div className="space-y-2">
+                <h3 className="text-xl font-black text-white font-serif">Refer Friends & Get 25% OFF</h3>
+                <div className="text-xs text-gray-300 max-w-md mx-auto space-y-1.5 text-left bg-[#0d0d0d] p-4 rounded-2xl border border-white/10">
+                  <p className="font-bold text-amber-300">Invite your friends to Trippy's Mehfill.</p>
+                  <p className="text-gray-400">When a referred customer places their first successful order using your referral code:</p>
+                  <ul className="list-disc list-inside space-y-1 text-gray-300 pt-1">
+                    <li>Friend receives <strong className="text-emerald-400">25% OFF</strong> on their first order.</li>
+                    <li>Referrer also receives <strong className="text-emerald-400">25% OFF coupon</strong> for their next order.</li>
+                  </ul>
+                </div>
               </div>
 
               <div className="p-3 bg-[#0d0d0d] rounded-2xl border border-white/15 inline-flex items-center gap-4">
-                <span className="font-mono font-black text-lg text-[#C5A059]">TRIPPY-{user.phone?.slice(-4) || '2026'}</span>
+                <span className="font-mono font-black text-lg text-[#C5A059]">{user.referral_code || `TRIPPY-${(user.full_name?.slice(0, 4)?.toUpperCase() || 'USER')}-${user.phone?.slice(-4) || '2026'}`}</span>
                 <button
-                  onClick={() => handleCopyReferral(`TRIPPY-${user.phone?.slice(-4) || '2026'}`)}
+                  onClick={() => handleCopyReferral(user.referral_code || `TRIPPY-${(user.full_name?.slice(0, 4)?.toUpperCase() || 'USER')}-${user.phone?.slice(-4) || '2026'}`)}
                   className="px-3 py-1.5 bg-[#C5A059] hover:bg-[#b38f48] text-black font-extrabold text-xs rounded-xl shadow-md transition"
                 >
-                  {copiedReferral ? 'Copied Link!' : 'Copy Code'}
+                  {copiedReferral ? 'Copied Code!' : 'Copy Code'}
                 </button>
               </div>
             </div>
@@ -889,7 +894,9 @@ export const CustomerDashboardModal: React.FC<CustomerDashboardModalProps> = ({
                   {/* Phone / Login ID */}
                   <div className="bg-[#0d0d0d] p-3.5 rounded-2xl border border-white/10 space-y-1">
                     <span className="text-[10px] text-gray-400 uppercase font-bold block">Login Phone / Username</span>
-                    <span className="text-white font-mono font-black text-sm">{user.phone || user.username || '9876543210'}</span>
+                    <span className="text-white font-mono font-black text-sm">
+                      {user.phone || user.username || <span className="text-gray-500 font-normal">Not set</span>}
+                    </span>
                   </div>
 
                   {/* Email */}

@@ -1,3 +1,7 @@
+import { supabase, isSupabaseConfigured } from './supabase';
+import { toFriendlyAuthError, NOT_CONFIGURED_MESSAGE } from './authErrors';
+import { validateEmail } from './validation';
+
 export interface SendOtpResult {
   success: boolean;
   message: string;
@@ -8,17 +12,44 @@ export interface VerifyOtpResult {
   message: string;
 }
 
-const GENERIC_SEND_FAILURE =
-  'We could not send the verification code right now. Please check your connection and try again.';
-const GENERIC_VERIFY_FAILURE =
-  'We could not verify the code right now. Please check your connection and try again.';
+const OTP_COOLDOWN_MS = 60000;
+const lastSentTimestamps: Record<string, number> = {};
+
+export function getRemainingOtpCooldownSeconds(email: string): number {
+  const cleanEmail = email.trim().toLowerCase();
+  let lastSent = lastSentTimestamps[cleanEmail] || 0;
+  if (!lastSent) {
+    try {
+      const stored = sessionStorage.getItem(`otp_sent_${cleanEmail}`);
+      if (stored) lastSent = parseInt(stored, 10);
+    } catch {
+      // Storage unavailable
+    }
+  }
+  if (!lastSent) return 0;
+  const elapsed = Date.now() - lastSent;
+  if (elapsed >= OTP_COOLDOWN_MS) return 0;
+  return Math.ceil((OTP_COOLDOWN_MS - elapsed) / 1000);
+}
+
+export function recordOtpSentTimestamp(email: string): void {
+  const cleanEmail = email.trim().toLowerCase();
+  const now = Date.now();
+  lastSentTimestamps[cleanEmail] = now;
+  try {
+    sessionStorage.setItem(`otp_sent_${cleanEmail}`, now.toString());
+  } catch {
+    // Storage unavailable
+  }
+}
 
 /**
- * Asks the server to generate and email a 6-digit verification code.
+ * Sends a 6-digit email verification code using Supabase Auth.
  *
- * The code itself is generated and stored server-side and is deliberately never
- * returned here -- the browser must not be able to see the value it is meant to
- * be proving knowledge of.
+ * Supabase generates, stores, expires and rate-limits the code, and delivers the
+ * email. Nothing about the code is ever visible to this application, which is
+ * what makes the check meaningful -- an earlier version generated the code in
+ * the browser and compared it there, so it could be read and bypassed.
  */
 export async function sendEmailVerificationOTP(
   email: string,
@@ -26,69 +57,267 @@ export async function sendEmailVerificationOTP(
 ): Promise<SendOtpResult> {
   const cleanEmail = email.trim().toLowerCase();
 
+  const emailCheck = validateEmail(cleanEmail);
+  if (!emailCheck.valid) {
+    return { success: false, message: emailCheck.message };
+  }
+
+  if (!isSupabaseConfigured) {
+    return { success: false, message: NOT_CONFIGURED_MESSAGE };
+  }
+
+  const remainingCooldown = getRemainingOtpCooldownSeconds(cleanEmail);
+  if (remainingCooldown > 0) {
+    console.log(`[EmailService] OTP rate limit enforced: ${remainingCooldown}s remaining for ${cleanEmail}`);
+    return {
+      success: true,
+      message: `An OTP verification code was already sent to ${cleanEmail}. Please enter the code or wait ${remainingCooldown}s to resend.`
+    };
+  }
+
   try {
-    const response = await fetch('/api/send-verification-otp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: cleanEmail, fullName })
+    console.log(`[EmailService] Requesting signup OTP resend via Supabase auth.resend for ${cleanEmail}...`);
+    
+    // 1. Try supabase.auth.resend for signup OTP
+    const { error: resendErr } = await supabase.auth.resend({
+      type: 'signup',
+      email: cleanEmail
     });
 
-    const data = await response.json().catch(() => null);
-
-    if (!response.ok || !data?.success) {
+    if (!resendErr) {
+      recordOtpSentTimestamp(cleanEmail);
+      console.log(`[EmailService] Signup OTP successfully sent via Supabase auth.resend to ${cleanEmail}`);
       return {
-        success: false,
-        message: data?.error || GENERIC_SEND_FAILURE
+        success: true,
+        message: `Verification code sent to ${cleanEmail}. Check your inbox (and spam folder).`
       };
     }
 
+    console.warn(`[EmailService] auth.resend returned: ${resendErr.message}. Trying signInWithOtp fallback...`);
+
+    // 2. Fallback to signInWithOtp if resend returns an error
+    const { error: otpError } = await supabase.auth.signInWithOtp({
+      email: cleanEmail,
+      options: {
+        shouldCreateUser: true,
+        data: fullName ? { full_name: fullName.trim() } : undefined
+      }
+    });
+
+    if (otpError) {
+      console.error(`[EmailService] Supabase OTP send error for ${cleanEmail}:`, otpError);
+      return { success: false, message: toFriendlyAuthError(otpError).message };
+    }
+
+    recordOtpSentTimestamp(cleanEmail);
+    console.log(`[EmailService] OTP successfully sent via signInWithOtp fallback to ${cleanEmail}`);
+
     return {
       success: true,
-      message: data.message || `Verification code sent to ${cleanEmail}. Check your inbox.`
+      message: `Verification code sent to ${cleanEmail}. Check your inbox (and spam folder).`
     };
   } catch (err) {
-    console.error('Failed to request verification OTP:', err);
-    return { success: false, message: GENERIC_SEND_FAILURE };
+    console.error(`[EmailService] Exception sending OTP to ${cleanEmail}:`, err);
+    return { success: false, message: toFriendlyAuthError(err).message };
   }
 }
 
 /**
- * Submits the user's entered code to the server, which is the only party that
- * knows the expected value.
+ * Sends a sign-in code to an EXISTING account only.
+ *
+ * `shouldCreateUser: false` means an unknown address is rejected rather than
+ * silently registered.
+ */
+export async function sendSignInOTP(email: string): Promise<SendOtpResult> {
+  const cleanEmail = email.trim().toLowerCase();
+
+  const emailCheck = validateEmail(cleanEmail);
+  if (!emailCheck.valid) {
+    return { success: false, message: emailCheck.message };
+  }
+
+  if (!isSupabaseConfigured) {
+    return { success: false, message: NOT_CONFIGURED_MESSAGE };
+  }
+
+  try {
+    const { error } = await supabase.auth.signInWithOtp({
+      email: cleanEmail,
+      options: { shouldCreateUser: false }
+    });
+
+    if (error) {
+      return { success: false, message: toFriendlyAuthError(error).message };
+    }
+
+    return {
+      success: true,
+      message: `Sign-in code sent to ${cleanEmail}. Check your inbox.`
+    };
+  } catch (err) {
+    return { success: false, message: toFriendlyAuthError(err).message };
+  }
+}
+
+/**
+ * Verifies the code with Supabase. On success Supabase establishes a session,
+ * which the auth context picks up via onAuthStateChange.
  */
 export async function verifyEmailOTPCode(
   email: string,
   enteredOtp: string
 ): Promise<VerifyOtpResult> {
   const cleanEmail = email.trim().toLowerCase();
-  const cleanEntered = enteredOtp.trim();
+  const token = enteredOtp.trim();
 
-  if (!cleanEntered) {
-    return { success: false, message: 'Please enter the 6-digit code sent to your email.' };
+  if (!token) {
+    return { success: false, message: 'Please enter the verification code sent to your email.' };
+  }
+
+  if (!/^\d{6,8}$/.test(token)) {
+    return { success: false, message: 'Enter the verification code from your email.' };
+  }
+
+  if (!isSupabaseConfigured) {
+    return { success: false, message: NOT_CONFIGURED_MESSAGE };
   }
 
   try {
-    const response = await fetch('/api/verify-otp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: cleanEmail, otp: cleanEntered })
+    console.log(`[EmailService] Verifying OTP for ${cleanEmail} (trying type: 'signup')...`);
+    // Try type 'signup' first because signUp creates the user with signup OTP
+    let { error } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token,
+      type: 'signup'
     });
 
-    const data = await response.json().catch(() => null);
+    if (error) {
+      console.warn(`[EmailService] verifyOtp with type 'signup' returned: ${error.message}. Trying fallback type 'email'...`);
+      // Fallback try type 'email' if token type was issued via signInWithOtp
+      const fallback = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token,
+        type: 'email'
+      });
+      if (!fallback.error) {
+        error = null;
+        console.log(`[EmailService] verifyOtp fallback with type 'email' succeeded for ${cleanEmail}`);
+      } else {
+        console.error(`[EmailService] Both signup and email verifyOtp failed for ${cleanEmail}:`, fallback.error);
+        return { success: false, message: toFriendlyAuthError(error).message };
+      }
+    } else {
+      console.log(`[EmailService] verifyOtp with type 'signup' succeeded for ${cleanEmail}`);
+    }
 
-    if (!response.ok || !data?.success) {
+    return { success: true, message: 'Email address verified successfully!' };
+  } catch (err) {
+    console.error(`[EmailService] Exception verifying OTP for ${cleanEmail}:`, err);
+    return { success: false, message: toFriendlyAuthError(err).message };
+  }
+}
+
+/**
+ * Sends a password reset OTP code to the user's registered email.
+ */
+export async function sendPasswordResetOTP(email: string): Promise<SendOtpResult> {
+  const cleanEmail = email.trim().toLowerCase();
+
+  const emailCheck = validateEmail(cleanEmail);
+  if (!emailCheck.valid) {
+    return { success: false, message: emailCheck.message };
+  }
+
+  if (!isSupabaseConfigured) {
+    return { success: false, message: NOT_CONFIGURED_MESSAGE };
+  }
+
+  try {
+    // Check the account exists first to prevent 500 auth errors on non-existent
+    // addresses. `profiles` is not readable before sign-in, so this goes through
+    // a SECURITY DEFINER function that answers with a boolean only.
+    const { data: exists } = await supabase.rpc('email_exists', { p_email: cleanEmail });
+
+    if (!exists) {
       return {
         success: false,
-        message: data?.error || 'Invalid 6-digit OTP code. Please check the code sent to your email.'
+        message: `No account found for "${cleanEmail}". Please click "Create Account" to register.`
       };
+    }
+
+    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+
+    if (error) {
+      return { success: false, message: toFriendlyAuthError(error).message };
     }
 
     return {
       success: true,
-      message: data.message || 'Email address verified successfully!'
+      message: `Password reset OTP code sent to ${cleanEmail}. Check your inbox.`
     };
   } catch (err) {
-    console.error('Failed to verify OTP:', err);
-    return { success: false, message: GENERIC_VERIFY_FAILURE };
+    return { success: false, message: toFriendlyAuthError(err).message };
+  }
+}
+
+/**
+ * Verifies the password reset OTP code and updates the user's password.
+ */
+export async function resetPasswordWithOTP(
+  email: string,
+  enteredOtp: string,
+  newPassword: string
+): Promise<VerifyOtpResult> {
+  const cleanEmail = email.trim().toLowerCase();
+  const token = enteredOtp.trim();
+
+  if (!token) {
+    return { success: false, message: 'Please enter the verification code sent to your email.' };
+  }
+
+  if (!/^\d{6,8}$/.test(token)) {
+    return { success: false, message: 'Enter the verification code from your email.' };
+  }
+
+  if (!newPassword || newPassword.length < 6) {
+    return { success: false, message: 'Password must be at least 6 characters long.' };
+  }
+
+  if (!isSupabaseConfigured) {
+    return { success: false, message: NOT_CONFIGURED_MESSAGE };
+  }
+
+  try {
+    // 1. Verify recovery OTP to establish session
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token,
+      type: 'recovery'
+    });
+
+    if (verifyError) {
+      // Fallback try type 'email' if recovery token type is set as email
+      const { error: emailVerifyError } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token,
+        type: 'email'
+      });
+      if (emailVerifyError) {
+        return { success: false, message: toFriendlyAuthError(verifyError).message };
+      }
+    }
+
+    // 2. Update user's password
+    const { error: updateError } = await supabase.auth.updateUser({
+      password: newPassword
+    });
+
+    if (updateError) {
+      return { success: false, message: toFriendlyAuthError(updateError).message };
+    }
+
+    return { success: true, message: 'Your password has been updated successfully! You are now signed in.' };
+  } catch (err) {
+    return { success: false, message: toFriendlyAuthError(err).message };
   }
 }
