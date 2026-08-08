@@ -14,12 +14,12 @@ run()  { # run <db> <file> <label>
 }
 
 # ===========================================================================
-step "A. Enum schema (phase2_schema.sql) — what the deployed database uses"
+step "A. Enum schema (legacy/phase2_schema.sql) — the alternate shape"
 # ===========================================================================
 psql -q -d postgres -c "DROP DATABASE IF EXISTS t_enum;" -c "CREATE DATABASE t_enum;" >/dev/null 2>&1
 run t_enum "$S/00_supabase_stub.sql"                                "supabase stub"
-run t_enum "$REPO/supabase/phase2_schema.sql"                       "phase2_schema.sql"
-run t_enum "$REPO/supabase/phase2_rls.sql"                          "phase2_rls.sql"
+run t_enum "$REPO/supabase/legacy/phase2_schema.sql"                       "phase2_schema.sql"
+run t_enum "$REPO/supabase/legacy/phase2_rls.sql"                          "phase2_rls.sql"
 
 # Seed rows that predate 0007, to prove the migration does not disturb them.
 psql -v ON_ERROR_STOP=1 -q -d t_enum -c "

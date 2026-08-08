@@ -162,8 +162,8 @@ RESULT: all migration checks passed
 | # | Item | Status | Evidence |
 |---|---|---|---|
 | 4.1 | 0007 publishes `orders` | ✅ VERIFIED | assertion: *"public.orders is published to supabase_realtime"* PASS |
-| 4.2 | Subscription keyed on identity | ✅ VERIFIED | [src/App.tsx:169](src/App.tsx#L169) — keyed on `user?.id`, not `[]`, because `postgres_changes` is RLS-filtered against the joining token |
-| 4.3 | Channel topics unique | ✅ VERIFIED | `uniqueTopic()` in [realtime.ts:11](src/services/supabase/realtime.ts#L11) |
+| 4.2 | Subscription keyed on identity | ✅ VERIFIED | [src/App.tsx:169](../src/App.tsx#L169) — keyed on `user?.id`, not `[]`, because `postgres_changes` is RLS-filtered against the joining token |
+| 4.3 | Channel topics unique | ✅ VERIFIED | `uniqueTopic()` in [realtime.ts:11](../src/services/supabase/realtime.ts#L11) |
 | 4.4 | Tracker reacts to payment changes | ✅ VERIFIED | effect compares `payment_status`, `payment_rejection_reason`, `driver_name` |
 | 4.5 | Published on **your** database | ⚠️ UNVERIFIABLE | Preflight §6 |
 | 4.6 | Realtime **service** enabled | ⚠️ UNVERIFIABLE | Dashboard → Database → Replication. **SQL cannot turn this on.** |

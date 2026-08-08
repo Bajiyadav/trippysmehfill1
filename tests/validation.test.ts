@@ -8,7 +8,7 @@ import {
   validatePassword,
   validateRegistration,
   escapeHtml
-} from './src/lib/validation';
+} from '../src/lib/validation';
 
 const VALID = {
   fullName: 'Baji Yadav',

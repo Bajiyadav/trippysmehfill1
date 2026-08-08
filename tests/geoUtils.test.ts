@@ -9,7 +9,7 @@ import {
   fetchPublicIP,
   detectDeviceAndOS,
   captureLiveLocation
-} from './src/lib/geoUtils';
+} from '../src/lib/geoUtils';
 
 // No fabricated fallback: a failed lookup yields an empty string so a profile
 // is never stamped with an IP that was never the customer's.

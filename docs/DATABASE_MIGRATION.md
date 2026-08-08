@@ -14,17 +14,17 @@ This guide outlines how to execute the Supabase database migration scripts to tr
 
 ## Step 2: Execute SQL Scripts in Sequence
 
-Execute the following files located in the [`supabase/`](file:///Users/bajiyadav/trippysmehfill1/supabase) directory:
+Execute the following files located in the [`supabase/`](../supabase) directory:
 
-### 1. [`supabase/phase2_schema.sql`](file:///Users/bajiyadav/trippysmehfill1/supabase/phase2_schema.sql)
+### 1. [`supabase/phase2_schema.sql`](../supabase/legacy/phase2_schema.sql)
 - **Purpose**: Creates PostgreSQL tables (`orders`, `order_items`, `menu_items`, `categories`, `inventory`, `inventory_transactions`, `feedback`, `banners`, `gallery_items`, `promo_codes`, `payments`, `delivery_locations`, `kitchen_settings`, `notifications`, `audit_logs`, `activity_logs`), foreign keys, enums, triggers, and performance indexes.
 - **Action**: Copy the contents of `phase2_schema.sql`, paste into the SQL Editor, and click **Run**.
 
-### 2. [`supabase/phase2_rls.sql`](file:///Users/bajiyadav/trippysmehfill1/supabase/phase2_rls.sql)
+### 2. [`supabase/phase2_rls.sql`](../supabase/legacy/phase2_rls.sql)
 - **Purpose**: Enables Row Level Security (RLS) across all tables and installs role-based access control policies (Customer, Staff, Driver, Admin) and anti-privilege escalation triggers.
 - **Action**: Copy the contents of `phase2_rls.sql`, paste into the SQL Editor, and click **Run**.
 
-### 3. [`supabase/phase2_seed.sql`](file:///Users/bajiyadav/trippysmehfill1/supabase/phase2_seed.sql)
+### 3. [`supabase/phase2_seed.sql`](../supabase/legacy/phase2_seed.sql)
 - **Purpose**: Populates initial food categories, default menu items, ERP kitchen settings, promotional banners, showcase gallery items, and starting inventory stock levels.
 - **Action**: Copy the contents of `phase2_seed.sql`, paste into the SQL Editor, and click **Run**.
 

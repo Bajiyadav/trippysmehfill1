@@ -199,7 +199,7 @@ Empty → re-run 0007, or Dashboard → Database → Replication → toggle `ord
 3. Browser console: `CHANNEL_ERROR` or `TIMED_OUT` on the `orders_realtime_*`
    channel? Check Network → WS for an open `realtime/v1/websocket`.
 4. Signed-in identity: the channel is keyed on `user?.id`
-   ([src/App.tsx:169](src/App.tsx#L169)) because `postgres_changes` is
+   ([src/App.tsx:169](../src/App.tsx#L169)) because `postgres_changes` is
    RLS-filtered against the token the socket joined with. Sign out and in again.
 
 **Interim:** tell staff to refresh the Payment Verification tab periodically.

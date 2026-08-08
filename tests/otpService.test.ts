@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { sendPhoneOTP, verifyPhoneOTPCode, sendEmailOTP, verifyEmailOTPCode, DEV_TEST_CREDENTIALS } from './src/lib/otpService';
+import { sendPhoneOTP, verifyPhoneOTPCode, sendEmailOTP, verifyEmailOTPCode, DEV_TEST_CREDENTIALS } from '../src/lib/otpService';
 
 test('DEV_TEST_CREDENTIALS contains standard test numbers', () => {
   assert.equal(Array.isArray(DEV_TEST_CREDENTIALS), true);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseOrderItems } from './src/services/supabase/orders';
+import { parseOrderItems } from '../src/services/supabase/orders';
 
 // Line items live in the `orders.items` jsonb column on the production
 // database. jsonb is schemaless, so anything can be in there: a row written by

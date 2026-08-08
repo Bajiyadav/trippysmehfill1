@@ -126,7 +126,7 @@ host, so builds are reproducible.
 
 ### Environment variables
 
-Only two are read, both in [src/lib/supabase.ts](src/lib/supabase.ts):
+Only two are read, both in [src/lib/supabase.ts](../src/lib/supabase.ts):
 
 ```
 VITE_SUPABASE_URL          https://<project-ref>.supabase.co
@@ -514,7 +514,7 @@ itself is a project setting** and cannot be turned on from SQL.
 ### 5.2 Subscription works
 
 The client opens a channel per signed-in identity in
-[src/App.tsx:169](src/App.tsx#L169). The keying on `user?.id` is deliberate:
+[src/App.tsx:169](../src/App.tsx#L169). The keying on `user?.id` is deliberate:
 `postgres_changes` events are RLS-filtered against the token the socket joined
 with, so a channel opened while anonymous stays anonymous.
 

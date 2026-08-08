@@ -26,7 +26,7 @@ Authentication runs directly on Supabase Auth without OTP requirements or extern
 
 ## 3. Frontend Authentication API
 
-Implemented in [`src/context/AuthContext.tsx`](file:///Users/bajiyadav/trippysmehfill1/src/context/AuthContext.tsx) and [`src/components/common/AuthModal.tsx`](file:///Users/bajiyadav/trippysmehfill1/src/components/common/AuthModal.tsx):
+Implemented in [`src/context/AuthContext.tsx`](../src/context/AuthContext.tsx) and [`src/components/common/AuthModal.tsx`](../src/components/common/AuthModal.tsx):
 
 ### Sign Up
 ```typescript

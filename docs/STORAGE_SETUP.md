@@ -47,7 +47,7 @@ CREATE POLICY "Admin Delete Assets" ON storage.objects
 
 ## 3. Storage API Service
 
-Implemented in [`src/services/supabase/storage.ts`](file:///Users/bajiyadav/trippysmehfill1/src/services/supabase/storage.ts):
+Implemented in [`src/services/supabase/storage.ts`](../src/services/supabase/storage.ts):
 
 ```typescript
 import { storageService } from './services/supabase';

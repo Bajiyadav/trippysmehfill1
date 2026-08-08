@@ -6,7 +6,7 @@ import {
   estimatedDeliveryLabel,
   buildUpiPaymentUri,
   CHECKOUT_PAYMENT_METHODS
-} from './src/lib/checkout';
+} from '../src/lib/checkout';
 
 // A checkout that should always pass, so each test can break exactly one thing.
 const valid = {

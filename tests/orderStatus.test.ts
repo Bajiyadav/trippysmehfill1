@@ -16,9 +16,9 @@ import {
   normalizePaymentStatus,
   PAYMENT_STATUS_VALUES,
   TRACKING_STAGES
-} from './src/lib/orderStatus';
-import { buildOrderShareText } from './src/lib/receipt';
-import { Order, OrderStatus } from './src/types';
+} from '../src/lib/orderStatus';
+import { buildOrderShareText } from '../src/lib/receipt';
+import { Order, OrderStatus } from '../src/types';
 
 const EVERY_STATUS: OrderStatus[] = [
   'pending', 'accepted', 'preparing', 'ready', 'delivered', 'cancelled',

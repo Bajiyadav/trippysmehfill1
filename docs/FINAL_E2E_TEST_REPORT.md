@@ -104,7 +104,7 @@ Order logic verified by unit tests; `createOrder`'s columns all verified present
 live. **No order was placed** — that requires a signed-in customer.
 
 Verified in source: the UPI payment screen is reachable only after
-`createOrder` resolves ([CheckoutView.tsx:226](src/components/customer/CheckoutView.tsx#L226)).
+`createOrder` resolves ([CheckoutView.tsx:226](../src/components/customer/CheckoutView.tsx#L226)).
 **No fake-success path exists.**
 
 Payment verification: 🔴 blocked on 0007.

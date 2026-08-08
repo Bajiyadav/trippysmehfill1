@@ -11,7 +11,7 @@ import {
   initialGalleryItems,
   initialFeedback,
   initialBanners
-} from './src/lib/initialData';
+} from '../src/lib/initialData';
 
 function duplicates(values: string[]): string[] {
   const seen = new Set<string>();

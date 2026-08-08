@@ -15,7 +15,7 @@ In Supabase Dashboard $\rightarrow$ **Database** $\rightarrow$ **Publications**,
 
 ## Client Service Implementation
 
-Realtime channels are managed centrally in [`src/services/supabase/realtime.ts`](file:///Users/bajiyadav/trippysmehfill1/src/services/supabase/realtime.ts):
+Realtime channels are managed centrally in [`src/services/supabase/realtime.ts`](../src/services/supabase/realtime.ts):
 
 ### 1. Kitchen & Live Orders Queue (`orders`)
 

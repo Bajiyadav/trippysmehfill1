@@ -49,7 +49,7 @@ To test the mobile login flow without spending SMS credits:
 
 ## 4. Frontend Code Flow Summary
 
-The application uses native Supabase Auth methods via [`src/lib/phoneAuthService.ts`](file:///Users/bajiyadav/trippysmehfill1/src/lib/phoneAuthService.ts):
+The application uses native Supabase Auth methods via `src/lib/phoneAuthService.ts` (removed — phone OTP now lives in [otpService.ts](../src/lib/otpService.ts)):
 
 ### Send SMS OTP Code
 ```typescript

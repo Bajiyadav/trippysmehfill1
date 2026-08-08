@@ -66,7 +66,7 @@ Live diagnostic checks against project `https://iptjevfvuwrdbqzgrzxg.supabase.co
 The fix requires executing two SQL scripts in your **Supabase Dashboard SQL Editor**:
 
 ### Step 1: Run RLS Recursion Fix Script
-Open **Supabase Dashboard** $\rightarrow$ **SQL Editor** $\rightarrow$ execute [`supabase/fix_profiles_rls.sql`](file:///Users/bajiyadav/trippysmehfill1/supabase/fix_profiles_rls.sql) (or [`supabase/phase2_rls.sql`](file:///Users/bajiyadav/trippysmehfill1/supabase/phase2_rls.sql)).
+Open **Supabase Dashboard** $\rightarrow$ **SQL Editor** $\rightarrow$ execute [`supabase/fix_profiles_rls.sql`](../supabase/legacy/fix_profiles_rls.sql) (or [`supabase/phase2_rls.sql`](../supabase/legacy/phase2_rls.sql)).
 
 This creates a recursion-safe admin check function:
 ```sql
@@ -85,7 +85,7 @@ CREATE POLICY "Admins full control over profiles" ON public.profiles
 Because `public.is_admin()` is declared `SECURITY DEFINER`, it bypasses inner RLS evaluation and breaks the recursion cycle completely.
 
 ### Step 2: Run Full Phase 2 Schema Script
-Open **Supabase Dashboard** $\rightarrow$ **SQL Editor** $\rightarrow$ execute [`supabase/phase2_schema.sql`](file:///Users/bajiyadav/trippysmehfill1/supabase/phase2_schema.sql).
+Open **Supabase Dashboard** $\rightarrow$ **SQL Editor** $\rightarrow$ execute [`supabase/phase2_schema.sql`](../supabase/legacy/phase2_schema.sql).
 
 This creates missing tables (`categories`, `inventory`, `inventory_transactions`, `order_items`, `feedback`, `banners`, `gallery_items`, `notifications`).
 

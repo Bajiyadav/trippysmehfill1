@@ -28,7 +28,7 @@ Legend: ✅ verified · ⚠️ code-verified, not run · 🔴 known broken · �
 ## Verified properties
 
 **"Never fake success" holds.** `setStep('upi_payment' | 'confirmed')` sits
-*inside* the `try`, after `await createOrder` resolves — [CheckoutView.tsx:226](src/components/customer/CheckoutView.tsx#L226).
+*inside* the `try`, after `await createOrder` resolves — [CheckoutView.tsx:226](../src/components/customer/CheckoutView.tsx#L226).
 There is no path to the payment screen without a saved row. On failure the
 customer keeps their cart and is told *"Nothing has been charged."*
 

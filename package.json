@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx --test *.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "e2e": "node e2e/smoke.mjs && node e2e/journey.mjs",
     "typecheck": "tsc --noEmit",
     "e2e:smoke": "node e2e/smoke.mjs",
