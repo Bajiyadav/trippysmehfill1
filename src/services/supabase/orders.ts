@@ -325,11 +325,21 @@ export const ordersService = {
     }
   },
 
+  /**
+   * Assigns a driver and sets the order status in one write.
+   *
+   * `status` used to be hardcoded to 'assigned', which silently overrode
+   * whatever the caller asked for. The admin panel passes the selected driver
+   * along with EVERY status button, so pressing "Mark Delivered" while a driver
+   * was chosen wrote 'assigned' instead of 'delivered' -- the row reverted the
+   * moment realtime refetched, and the button looked broken.
+   */
   async assignDriver(
     orderId: string,
     driverId: string,
     driverName: string,
-    driverPhone: string
+    driverPhone: string,
+    status: OrderStatus = 'assigned'
   ): Promise<void> {
     const { error } = await supabase
       .from('orders')
@@ -337,7 +347,7 @@ export const ordersService = {
         driver_id: driverId,
         driver_name: driverName,
         driver_phone: driverPhone,
-        status: 'assigned',
+        status,
       })
       .eq('id', orderId);
 

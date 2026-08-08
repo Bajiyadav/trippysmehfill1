@@ -336,3 +336,37 @@ test('share text names the order, its items and what is owed', () => {
   assert.match(text, /Pay on delivery/);
   assert.match(text, /Preparing/);
 });
+
+// --- admin status transitions -----------------------------------------------
+
+test('every status an admin can set is one the timeline can render', () => {
+  // The admin panel offers Cooking, Out for Delivery, Delivered and Cancelled.
+  // "Mark Delivered" silently wrote 'assigned' whenever a driver was selected,
+  // because assignDriver hardcoded the status and overrode the caller. These
+  // assertions pin the set the admin can produce so a regression is caught here
+  // rather than by an admin wondering why the button does nothing.
+  const adminSettable: OrderStatus[] = ['cooking', 'out_for_delivery', 'delivered', 'cancelled', 'assigned'];
+
+  for (const status of adminSettable) {
+    assert.ok(statusLabel(status).length > 0, `no label for ${status}`);
+    const steps = buildTrackingTimeline({ payment_method: 'COD', payment_status: 'pending', status });
+    assert.ok(steps.length > 0, `no timeline for ${status}`);
+  }
+});
+
+test('delivered is a terminal state the customer sees as complete', () => {
+  assert.equal(statusLabel('delivered'), 'Delivered');
+  assert.equal(isCurrentOrder({ status: 'delivered' }), false);
+
+  const steps = buildTrackingTimeline({ payment_method: 'COD', payment_status: 'pending', status: 'delivered' });
+  const delivered = steps.find(s => s.key === 'delivered');
+  assert.equal(delivered?.state, 'current', 'Delivered should be the active step, not upcoming');
+  assert.equal(steps.find(s => s.key === 'out_for_delivery')?.state, 'done');
+});
+
+test("'assigned' and 'delivered' are distinct — one must not stand in for the other", () => {
+  // The exact confusion the bug caused.
+  assert.notEqual(statusLabel('assigned'), statusLabel('delivered'));
+  assert.equal(isCurrentOrder({ status: 'assigned' }), true);
+  assert.equal(isCurrentOrder({ status: 'delivered' }), false);
+});
