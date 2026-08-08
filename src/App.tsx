@@ -368,6 +368,11 @@ function MainApp() {
   };
 
   const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus, driverId?: string, driverName?: string, driverPhone?: string) => {
+    // Kept so the write can be rolled back if the database refuses it. The
+    // optimistic update previously stayed on screen after a failure, so an
+    // admin saw "Delivered" while the row still said something else.
+    const previous = orders.find(o => o.id === orderId);
+
     setOrders(prev =>
       prev.map(o => {
         if (o.id === orderId) {
@@ -385,12 +390,26 @@ function MainApp() {
 
     try {
       if (driverId && driverName) {
-        await ordersService.assignDriver(orderId, driverId, driverName, driverPhone || '');
+        // Pass the status through. Without it assignDriver forced 'assigned',
+        // so "Mark Delivered" with a driver selected never actually delivered.
+        await ordersService.assignDriver(orderId, driverId, driverName, driverPhone || '', status);
       } else {
         await ordersService.updateOrderStatus(orderId, status);
       }
     } catch (err) {
       console.error('Error updating order status in Supabase:', err);
+
+      // Put the row back the way the database still has it, and say so. A
+      // silent revert on the next refetch looks like the button did nothing.
+      if (previous) {
+        setOrders(prev => prev.map(o => (o.id === orderId ? previous : o)));
+      }
+      showToast({
+        title: 'Could not update the order',
+        description: err instanceof Error ? err.message : 'The database rejected the change. Nothing was saved.',
+        tone: 'error',
+        key: `order-update-failed-${orderId}`
+      });
     }
   };
 

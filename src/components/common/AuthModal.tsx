@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
-import { X, Lock, Mail, User, Phone, MapPin, AlertCircle, ShieldCheck, Key, RefreshCw, CheckCircle, Navigation, ShieldAlert } from 'lucide-react';
+import { X, Lock, Mail, User, Phone, MapPin, AlertCircle, ShieldCheck, Key, RefreshCw, CheckCircle, Navigation, ShieldAlert, Eye, EyeOff } from 'lucide-react';
 import { UserProfile } from '../../types';
 import { sendEmailVerificationOTP, verifyEmailOTPCode, sendPasswordResetOTP, resetPasswordWithOTP } from '../../lib/emailService';
 import OtpInput from './OtpInput';
@@ -29,6 +29,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // Forgot password flow state: 'none' | 'email_input' | 'otp_input'
   const [forgotStep, setForgotStep] = useState<'none' | 'email_input' | 'otp_input'>('none');
+
+  // Show/hide for every password field. A password the user cannot read is a
+  // password they mistype -- especially on a phone keyboard, and especially
+  // when they are asked to type it twice.
+  const [showForgotNew, setShowForgotNew] = useState(false);
+  const [showForgotConfirm, setShowForgotConfirm] = useState(false);
+  const [showSignIn, setShowSignIn] = useState(false);
+  const [showSignUp, setShowSignUp] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotNewPassword, setForgotNewPassword] = useState('');
   const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
@@ -360,10 +368,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsSendingOtp(true);
 
     try {
-      console.log('[AuthModal] Resending 6-digit OTP code to:', email);
-      const result = await sendEmailVerificationOTP(email.trim().toLowerCase(), fullName.trim());
+      const cleanEmail = email.trim().toLowerCase();
+
+      // Send the OTP that belongs to the screen the user is actually on.
+      // This always sent the SIGNUP verification code, so pressing "Resend
+      // Code" on the password-reset screen mailed the wrong kind of OTP --
+      // which then failed verification, with no clue why.
+      const isPasswordReset = forgotStep === 'otp_input';
+
+      console.log('[AuthModal] Resending 6-digit OTP code to:', cleanEmail,
+        isPasswordReset ? '(password reset)' : '(signup verification)');
+
+      const result = isPasswordReset
+        ? await sendPasswordResetOTP(cleanEmail)
+        : await sendEmailVerificationOTP(cleanEmail, fullName.trim());
+
       setResendTimer(60);
-      savePendingOtpState(email.trim().toLowerCase(), fullName.trim(), phone.trim(), hostelAddress.trim(), 'otp_verify');
+
+      // Only the signup flow has pending state worth restoring after a reload.
+      if (!isPasswordReset) {
+        savePendingOtpState(cleanEmail, fullName.trim(), phone.trim(), hostelAddress.trim(), 'otp_verify');
+      }
 
       if (!result.success) {
         console.warn('[AuthModal] Resend OTP returned warning/error:', result.message);
@@ -901,7 +926,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     onChange={(e) => setForgotEmail(e.target.value)}
                     required
                     placeholder="Enter your email"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className="w-full pl-9 pr-12 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
@@ -968,13 +993,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <div className="relative">
                   <Lock className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
-                    type="password"
+                    type={showForgotNew ? 'text' : 'password'}
                     value={forgotNewPassword}
                     onChange={(e) => setForgotNewPassword(e.target.value)}
                     required
                     placeholder="Enter your password"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className="w-full pl-9 pr-12 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotNew(v => !v)}
+                    aria-label={showForgotNew ? 'Hide new password' : 'Show new password'}
+                    aria-pressed={showForgotNew}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-orange-500/60 transition"
+                  >
+                    {showForgotNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -985,13 +1019,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <div className="relative">
                   <Lock className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
-                    type="password"
+                    type={showForgotConfirm ? 'text' : 'password'}
                     value={forgotConfirmPassword}
                     onChange={(e) => setForgotConfirmPassword(e.target.value)}
                     required
                     placeholder="Re-enter your password"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className="w-full pl-9 pr-12 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotConfirm(v => !v)}
+                    aria-label={showForgotConfirm ? 'Hide confirmed new password' : 'Show confirmed new password'}
+                    aria-pressed={showForgotConfirm}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-orange-500/60 transition"
+                  >
+                    {showForgotConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -1037,7 +1080,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     onChange={(e) => setSignInIdentifier(e.target.value)}
                     required
                     placeholder="Enter your phone or email"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className="w-full pl-9 pr-12 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
@@ -1063,12 +1106,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <div className="relative">
                   <Lock className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
-                    type="password"
+                    type={showSignIn ? 'text' : 'password'}
                     value={signInPassword}
                     onChange={(e) => setSignInPassword(e.target.value)}
                     placeholder="Enter password"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className="w-full pl-9 pr-12 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowSignIn(v => !v)}
+                    aria-label={showSignIn ? 'Hide password' : 'Show password'}
+                    aria-pressed={showSignIn}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-orange-500/60 transition"
+                  >
+                    {showSignIn ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -1112,7 +1164,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     onChange={(e) => setFullName(e.target.value)}
                     required
                     placeholder="Enter your full name"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className="w-full pl-9 pr-12 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
@@ -1152,7 +1204,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     onChange={(e) => setEmail(e.target.value)}
                     required
                     placeholder="Enter your email"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className="w-full pl-9 pr-12 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
@@ -1167,7 +1219,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     onChange={(e) => setHostelAddress(e.target.value)}
                     required
                     placeholder="Enter your delivery address"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className="w-full pl-9 pr-12 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
                 </div>
               </div>
@@ -1177,13 +1229,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <div className="relative">
                   <Lock className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
-                    type="password"
+                    type={showSignUp ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     placeholder="Enter your password"
-                    className="w-full pl-9 pr-3 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
+                    className="w-full pl-9 pr-12 py-2.5 bg-[#181818] border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 outline-none focus:border-orange-500"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowSignUp(v => !v)}
+                    aria-label={showSignUp ? 'Hide password' : 'Show password'}
+                    aria-pressed={showSignUp}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-orange-500/60 transition"
+                  >
+                    {showSignUp ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
